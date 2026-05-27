@@ -8,8 +8,8 @@ env = environ.Env()
 environ.Env.read_env(BASE_DIR / ".env")
 
 SECRET_KEY = env("DJANGO_SECRET_KEY")
-ALLOWED_HOSTS = env.list("DJANGO_ALLOWED_HOSTS", default=["localhost"])
-DEBUG = True
+DEBUG = env.bool("DEBUG", default=False)
+ALLOWED_HOSTS = env.list("DJANGO_ALLOWED_HOSTS", default=["*"])
 
 DJANGO_APPS = [
     "django.contrib.admin",
@@ -44,6 +44,7 @@ INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -58,10 +59,7 @@ WSGI_APPLICATION = "config.wsgi.application"
 AUTH_USER_MODEL = "authentication.User"
 
 DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
-    }
+    "default": env.db("DATABASE_URL", default=f"sqlite:///{BASE_DIR / 'db.sqlite3'}")
 }
 
 REST_FRAMEWORK = {
@@ -82,21 +80,22 @@ SIMPLE_JWT = {
 
 CORS_ALLOW_ALL_ORIGINS = True
 
-AWS_ACCESS_KEY_ID = env("MINIO_ACCESS_KEY")
-AWS_SECRET_ACCESS_KEY = env("MINIO_SECRET_KEY")
-AWS_STORAGE_BUCKET_NAME = env("MINIO_BUCKET_NAME")
-AWS_S3_ENDPOINT_URL = env("MINIO_ENDPOINT")
-AWS_S3_USE_SSL = env.bool("MINIO_USE_SSL", default=False)
-AWS_DEFAULT_ACL = "private"
-AWS_S3_FILE_OVERWRITE = False
+AWS_ACCESS_KEY_ID       = env("MINIO_ACCESS_KEY",    default="")
+AWS_SECRET_ACCESS_KEY   = env("MINIO_SECRET_KEY",    default="")
+AWS_STORAGE_BUCKET_NAME = env("MINIO_BUCKET_NAME",   default="academia-docs")
+AWS_S3_ENDPOINT_URL     = env("MINIO_ENDPOINT",      default="")
+AWS_S3_USE_SSL          = env.bool("MINIO_USE_SSL",  default=False)
+AWS_DEFAULT_ACL         = "private"
+AWS_S3_FILE_OVERWRITE   = False
 
-RESEND_API_KEY = env("RESEND_API_KEY")
-DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL")
-STRIPE_SECRET_KEY = env("STRIPE_SECRET_KEY")
-STRIPE_WEBHOOK_SECRET = env("STRIPE_WEBHOOK_SECRET")
+RESEND_API_KEY        = env("RESEND_API_KEY",        default="")
+DEFAULT_FROM_EMAIL    = env("DEFAULT_FROM_EMAIL",    default="noreply@example.com")
+STRIPE_SECRET_KEY     = env("STRIPE_SECRET_KEY",     default="")
+STRIPE_WEBHOOK_SECRET = env("STRIPE_WEBHOOK_SECRET", default="")
 
 STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
+STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 
 LANGUAGE_CODE = "es-es"
 TIME_ZONE = "Europe/Madrid"
