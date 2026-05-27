@@ -18,6 +18,7 @@ class Pago(models.Model):
     metodo = models.CharField(max_length=20)
     estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default="pendiente")
     fecha = models.DateField(null=True, blank=True)
+    horas_trabajadas = models.DecimalField(max_digits=5, decimal_places=1, default=0, help_text='Horas trabajadas este mes')
     notas = models.TextField(blank=True)
     num_doc = models.CharField(max_length=30, blank=True)
     serie_id = models.CharField(max_length=10, blank=True)

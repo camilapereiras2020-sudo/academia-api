@@ -12,4 +12,7 @@ urlpatterns = [
     path(API_PREFIX + "asistencia/", include("modules.asistencia.urls")),
     path(API_PREFIX + "pagos/",      include("modules.pagos.urls")),
     path(API_PREFIX + "documentos/", include("modules.documentos.urls")),
+    path("api/v1/", include("modules.crm.urls")),
+    path("api/v1/", include("modules.placement_test.urls")),
+    path("api/v1/", include("modules.empresas.urls")),
 ]

@@ -35,6 +35,9 @@ LOCAL_APPS = [
     "modules.asistencia",
     "modules.pagos",
     "modules.documentos",
+    "modules.crm",
+    "modules.placement_test",
+    "modules.empresas",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -68,6 +71,7 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
     ],
+
 }
 
 SIMPLE_JWT = {

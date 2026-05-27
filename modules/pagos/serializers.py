@@ -8,5 +8,5 @@ class PagoSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Pago
-        fields = ["id", "pagador", "pagador_nombre", "alumno", "alumno_nombre", "grupo", "grupo_nombre", "periodo", "mensualidad", "descuento", "extras", "total", "metodo", "estado", "fecha", "notas", "num_doc", "serie_id", "iban", "stripe_payment_intent", "created_at"]
-        read_only_fields = ["id", "created_at", "num_doc"]
+        fields = ["id", "pagador", "pagador_nombre", "alumno", "alumno_nombre", "grupo", "grupo_nombre", "periodo", "mensualidad", "descuento", "extras", "total", "metodo", "estado", "fecha", "horas_trabajadas", "notas", "num_doc", "serie_id", "iban", "stripe_payment_intent", "created_at"]
+        read_only_fields = ["id", "created_at", "num_doc", "serie_id"]
