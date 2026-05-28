@@ -5,4 +5,6 @@ db.sqlite3
 .env
 staticfiles/
 google-credentials.json
+.google-token.json
+oauth-credentials.json
 

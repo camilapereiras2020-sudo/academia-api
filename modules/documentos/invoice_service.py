@@ -39,20 +39,51 @@ MESES_ES = {
 
 METODOS_FACTURA = {"bizum", "transferencia", "tarjeta", "online"}
 
-SCOPES = ["https://www.googleapis.com/auth/drive"]
+SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 
-# Credentials file sits at the Django project root (next to manage.py)
-_HERE    = os.path.dirname(__file__)                        # modules/documentos/
-_API_DIR = os.path.dirname(os.path.dirname(_HERE))         # project root
+# Project root (next to manage.py)
+_HERE      = os.path.dirname(__file__)
+_API_DIR   = os.path.dirname(os.path.dirname(_HERE))
+TOKEN_PATH = os.path.join(_API_DIR, ".google-token.json")
 CREDS_PATH = os.path.join(_API_DIR, "google-credentials.json")
 
 
 # ── Google Drive helpers ─────────────────────────────────────────────────────
 
 def _drive():
-    creds = service_account.Credentials.from_service_account_file(
-        CREDS_PATH, scopes=SCOPES
-    )
+    """Return an authenticated Drive service.
+
+    Prefers OAuth user token (.google-token.json) so uploads count against the
+    user's own storage. Falls back to service account for server environments.
+    """
+    import json
+    from google.auth.transport.requests import Request
+
+    if os.path.exists(TOKEN_PATH):
+        from google.oauth2.credentials import Credentials
+        with open(TOKEN_PATH) as f:
+            td = json.load(f)
+        creds = Credentials(
+            token         = td.get("token"),
+            refresh_token = td.get("refresh_token"),
+            token_uri     = td.get("token_uri", "https://oauth2.googleapis.com/token"),
+            client_id     = td.get("client_id"),
+            client_secret = td.get("client_secret"),
+            scopes        = td.get("scopes"),
+        )
+        if creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+            td.update({
+                "token": creds.token,
+                "scopes": list(creds.scopes) if creds.scopes else td.get("scopes"),
+            })
+            with open(TOKEN_PATH, "w") as f:
+                json.dump(td, f)
+    else:
+        creds = service_account.Credentials.from_service_account_file(
+            CREDS_PATH, scopes=SCOPES
+        )
+
     return build("drive", "v3", credentials=creds, cache_discovery=False)
 
 
@@ -77,13 +108,22 @@ def _trimester(month):
     return "T3 (Septiembre-Diciembre)"
 
 
-DRIVE_ROOT_NAME = "Rangers Academy Facturas"
-
-
 def upload_to_drive(pdf_bytes: bytes, filename: str, year: int, month: int) -> str:
-    """Upload PDF bytes to Drive. Returns the Drive file id."""
+    """Upload PDF bytes to Drive. Returns the Drive file id.
+
+    Requires GOOGLE_DRIVE_FOLDER_ID env var pointing to a folder in the
+    user's personal Drive that has been shared with the service account
+    (Editor access). Files are stored in year/trimester subfolders.
+    """
+    root_id = os.environ.get("GOOGLE_DRIVE_FOLDER_ID")
+    if not root_id:
+        raise ValueError(
+            "GOOGLE_DRIVE_FOLDER_ID is not set. "
+            "Create a folder in Google Drive, share it with the service account "
+            "(rangers-academy@storied-precept-452716-v2.iam.gserviceaccount.com), "
+            "copy the folder ID from the URL, and set it in .env."
+        )
     service  = _drive()
-    root_id  = _folder(service, DRIVE_ROOT_NAME)                  # auto-created if missing
     year_id  = _folder(service, f"Facturas {year}", root_id)
     tri_id   = _folder(service, _trimester(month), year_id)
 
