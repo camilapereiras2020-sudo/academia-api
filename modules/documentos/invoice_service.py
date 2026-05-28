@@ -51,38 +51,43 @@ CREDS_PATH = os.path.join(_API_DIR, "google-credentials.json")
 # ── Google Drive helpers ─────────────────────────────────────────────────────
 
 def _drive():
-    """Return an authenticated Drive service.
+    """Return an authenticated Drive service using OAuth2 user credentials.
 
-    Prefers OAuth user token (.google-token.json) so uploads count against the
-    user's own storage. Falls back to service account for server environments.
+    Token source priority:
+      1. GOOGLE_TOKEN_JSON env var (Railway / production)
+      2. .google-token.json file (local dev)
     """
     import json
     from google.auth.transport.requests import Request
+    from google.oauth2.credentials import Credentials
 
-    if os.path.exists(TOKEN_PATH):
-        from google.oauth2.credentials import Credentials
+    raw = os.environ.get("GOOGLE_TOKEN_JSON", "")
+    if raw:
+        td = json.loads(raw)
+    elif os.path.exists(TOKEN_PATH):
         with open(TOKEN_PATH) as f:
             td = json.load(f)
-        creds = Credentials(
-            token         = td.get("token"),
-            refresh_token = td.get("refresh_token"),
-            token_uri     = td.get("token_uri", "https://oauth2.googleapis.com/token"),
-            client_id     = td.get("client_id"),
-            client_secret = td.get("client_secret"),
-            scopes        = td.get("scopes"),
+    else:
+        raise RuntimeError(
+            "No Google Drive credentials found. "
+            "Set GOOGLE_TOKEN_JSON env var or run setup_drive_auth.py locally."
         )
-        if creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-            td.update({
-                "token": creds.token,
-                "scopes": list(creds.scopes) if creds.scopes else td.get("scopes"),
-            })
+
+    creds = Credentials(
+        token         = td.get("token"),
+        refresh_token = td.get("refresh_token"),
+        token_uri     = td.get("token_uri", "https://oauth2.googleapis.com/token"),
+        client_id     = td.get("client_id"),
+        client_secret = td.get("client_secret"),
+        scopes        = td.get("scopes"),
+    )
+    if creds.expired and creds.refresh_token:
+        creds.refresh(Request())
+        # Persist refreshed token locally if possible
+        if os.path.exists(TOKEN_PATH):
+            td.update({"token": creds.token})
             with open(TOKEN_PATH, "w") as f:
                 json.dump(td, f)
-    else:
-        creds = service_account.Credentials.from_service_account_file(
-            CREDS_PATH, scopes=SCOPES
-        )
 
     return build("drive", "v3", credentials=creds, cache_discovery=False)
 
