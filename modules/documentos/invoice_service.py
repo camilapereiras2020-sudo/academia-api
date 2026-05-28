@@ -209,42 +209,45 @@ def generate_pdf_bytes(
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
         buf, pagesize=A4,
-        leftMargin=2*cm, rightMargin=2*cm,
-        topMargin=1.5*cm, bottomMargin=1.5*cm,
+        leftMargin=2.2*cm, rightMargin=2.2*cm,
+        topMargin=2.5*cm, bottomMargin=2.5*cm,
     )
-    W      = A4[0] - 4*cm   # usable page width
+    W      = A4[0] - 4.4*cm   # usable page width
     story  = []
 
     # ── Header ───────────────────────────────────────────────────────────────
-    logo_path = os.path.join(os.path.dirname(__file__), "logo.png")
+    logo_path = os.path.join(os.path.dirname(__file__), "Logo.png")
+    if not os.path.exists(logo_path):
+        logo_path = os.path.join(os.path.dirname(__file__), "logo.png")
     if os.path.exists(logo_path):
-        left_cell = Image(logo_path, width=4.5*cm, height=2*cm, kind="proportional")
+        left_cell = Image(logo_path, width=9*cm, height=5*cm, kind="proportional")
     else:
         left_cell = Paragraph(
-            "<font color='#B08D57' size=20><b>Cami&amp;Co</b></font>",
-            _ps("logo", leading=24),
+            "<font color='#B08D57' size=22><b>Cami&amp;Co</b></font>",
+            _ps("logo", leading=26),
         )
 
     right_cell = Paragraph(
-        f"<font color='#B08D57' size=26><b>{title_label}</b></font><br/>"
-        f"<font color='#2D2D2D' size=11>N.º {num_doc}</font><br/>"
-        f"<font color='#6B6B6B' size=9>Fecha: {_date_es(fecha)}</font>",
-        _ps("rh", alignment=TA_RIGHT, leading=18),
+        f"<font color='#B08D57' size=28><b>{title_label}</b></font><br/>"
+        f"<font color='#2D2D2D' size=12><b>N.º {num_doc}</b></font><br/>"
+        f"<font color='#2D2D2D' size=11>Fecha: {_date_es(fecha)}</font>",
+        _ps("rh", alignment=TA_RIGHT, leading=22),
     )
 
-    hdr = Table([[left_cell, right_cell]], colWidths=[8*cm, W - 8*cm])
+    hdr = Table([[left_cell, right_cell]], colWidths=[9*cm, W - 9*cm])
     hdr.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("ALIGN",  (1, 0), (1,  0),  "RIGHT"),
         ("LINEBELOW", (0, 0), (-1, -1), 0, WHITE),
     ]))
     story.append(hdr)
-    story.append(HRFlowable(width="100%", thickness=2, color=GOLD, spaceAfter=8))
+    story.append(Spacer(1, 0.4*cm))
+    story.append(HRFlowable(width="100%", thickness=2, color=GOLD, spaceAfter=10))
 
     # ── Quote ─────────────────────────────────────────────────────────────────
     story.append(Paragraph(
         "<i>\"It always seems impossible until it's done.\" — Nelson Mandela</i>",
-        _ps("q", fontSize=8, textColor=LGRAY, alignment=TA_CENTER, spaceAfter=10, leading=12),
+        _ps("q", fontSize=8.5, textColor=LGRAY, alignment=TA_CENTER, spaceAfter=14, leading=13),
     ))
 
     # ── DE / PARA ─────────────────────────────────────────────────────────────
@@ -278,26 +281,44 @@ def generate_pdf_bytes(
         ("LINEBELOW", (0, 0), (-1, -1), 0, WHITE),
     ]))
     story.append(info_tbl)
-    story.append(Spacer(1, 0.4*cm))
+    story.append(Spacer(1, 0.6*cm))
 
-    # ── Alumno ────────────────────────────────────────────────────────────────
+    # ── Alumno + Horario ──────────────────────────────────────────────────────
     story.append(Paragraph(
         "ALUMNO/S",
         _ps("al", fontSize=8, textColor=GOLD, fontName="Helvetica-Bold", spaceAfter=4),
     ))
     alumno_tbl = Table(
         [[Paragraph(f"<b>{alumno_nombre}</b>",
-                    _ps("an", fontSize=11, textColor=DARK, alignment=TA_CENTER))]],
+                    _ps("an", fontSize=12, textColor=DARK, alignment=TA_CENTER))]],
         colWidths=[W],
     )
     alumno_tbl.setStyle(TableStyle([
         ("BACKGROUND",    (0, 0), (-1, -1), LGBG),
         ("BOX",           (0, 0), (-1, -1), 1.5, GOLD),
-        ("TOPPADDING",    (0, 0), (-1, -1), 8),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ("TOPPADDING",    (0, 0), (-1, -1), 10),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
     ]))
     story.append(alumno_tbl)
-    story.append(Spacer(1, 0.5*cm))
+
+    if grupo_nombre:
+        story.append(Spacer(1, 0.25*cm))
+        story.append(Paragraph(
+            "GRUPO / HORARIO",
+            _ps("gl", fontSize=8, textColor=GOLD, fontName="Helvetica-Bold", spaceAfter=3),
+        ))
+        grupo_tbl = Table(
+            [[Paragraph(grupo_nombre, _ps("gn", fontSize=10, textColor=DARK, alignment=TA_CENTER))]],
+            colWidths=[W],
+        )
+        grupo_tbl.setStyle(TableStyle([
+            ("BACKGROUND",    (0, 0), (-1, -1), LGBG),
+            ("TOPPADDING",    (0, 0), (-1, -1), 7),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+        ]))
+        story.append(grupo_tbl)
+
+    story.append(Spacer(1, 0.6*cm))
 
     # ── Items table ───────────────────────────────────────────────────────────
     if concepto_libre:
