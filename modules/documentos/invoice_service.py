@@ -77,10 +77,13 @@ def _trimester(month):
     return "T3 (Septiembre-Diciembre)"
 
 
+DRIVE_ROOT_NAME = "Rangers Academy Facturas"
+
+
 def upload_to_drive(pdf_bytes: bytes, filename: str, year: int, month: int) -> str:
     """Upload PDF bytes to Drive. Returns the Drive file id."""
     service  = _drive()
-    root_id  = os.environ.get("GOOGLE_DRIVE_FOLDER_ID")          # may be None → service-account root
+    root_id  = _folder(service, DRIVE_ROOT_NAME)                  # auto-created if missing
     year_id  = _folder(service, f"Facturas {year}", root_id)
     tri_id   = _folder(service, _trimester(month), year_id)
 
