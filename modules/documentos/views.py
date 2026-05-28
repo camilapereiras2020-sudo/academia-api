@@ -1,20 +1,21 @@
+import os
 
+from django.http import HttpResponse
 from rest_framework import permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
-from django.http import FileResponse
+
 from .models import Documento
 from .serializers import DocumentoSerializer
-import os
 
 
 class DocumentoViewSet(ModelViewSet):
-    serializer_class = DocumentoSerializer
+    serializer_class   = DocumentoSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        qs = Documento.objects.filter(academia=self.request.user)
+        qs   = Documento.objects.filter(academia=self.request.user)
         pago = self.request.query_params.get("pago")
         tipo = self.request.query_params.get("tipo")
         if pago:
@@ -29,7 +30,7 @@ class DocumentoViewSet(ModelViewSet):
         from .invoice_service import generate_invoice_for_pago
 
         pago_id = request.data.get("pago_id")
-        tipo = request.data.get("tipo", "factura")
+        tipo    = request.data.get("tipo", "factura")
 
         if not pago_id:
             return Response({"error": "pago_id es obligatorio"}, status=status.HTTP_400_BAD_REQUEST)
@@ -42,7 +43,7 @@ class DocumentoViewSet(ModelViewSet):
             return Response({"error": "Pago no encontrado"}, status=status.HTTP_404_NOT_FOUND)
 
         try:
-            num_doc, file_path = generate_invoice_for_pago(pago, tipo)
+            num_doc, drive_id = generate_invoice_for_pago(pago, tipo)
         except Exception as e:
             return Response(
                 {"error": f"Error generando documento: {str(e)}"},
@@ -50,13 +51,14 @@ class DocumentoViewSet(ModelViewSet):
             )
 
         doc = Documento.objects.create(
-            academia=request.user,
-            pago=pago,
-            tipo=tipo,
-            nombre=os.path.basename(file_path),
-            num_doc=num_doc,
-            local_path=file_path,
-            mime_type="application/pdf",
+            academia   = request.user,
+            pago       = pago,
+            tipo       = tipo,
+            nombre     = f"{num_doc}.pdf",
+            num_doc    = num_doc,
+            s3_key     = drive_id,       # Drive file id stored here
+            local_path = "",
+            mime_type  = "application/pdf",
         )
 
         if not pago.num_doc:
@@ -68,6 +70,23 @@ class DocumentoViewSet(ModelViewSet):
     @action(detail=True, methods=["get"], url_path="descargar")
     def descargar(self, request, pk=None):
         doc = self.get_object()
+
+        # ── Google Drive (new path) ─────────────────────────────────────────
+        if doc.s3_key:
+            try:
+                from .invoice_service import download_from_drive
+                pdf_bytes = download_from_drive(doc.s3_key)
+                response  = HttpResponse(pdf_bytes, content_type="application/pdf")
+                response["Content-Disposition"] = f'attachment; filename="{doc.nombre}"'
+                return response
+            except Exception as e:
+                return Response(
+                    {"error": f"Error descargando desde Drive: {str(e)}"},
+                    status=status.HTTP_502_BAD_GATEWAY,
+                )
+
+        # ── Local file fallback (legacy docs) ───────────────────────────────
+        from django.http import FileResponse
         path = doc.local_path
         if path and os.path.exists(path):
             return FileResponse(
@@ -76,35 +95,36 @@ class DocumentoViewSet(ModelViewSet):
                 as_attachment=True,
                 filename=doc.nombre,
             )
-        docx_path = path.replace(".pdf", ".docx") if path else None
-        if docx_path and os.path.exists(docx_path):
+        docx = path.replace(".pdf", ".docx") if path else None
+        if docx and os.path.exists(docx):
             return FileResponse(
-                open(docx_path, "rb"),
+                open(docx, "rb"),
                 content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 as_attachment=True,
                 filename=doc.nombre.replace(".pdf", ".docx"),
             )
+
         return Response({"error": "Archivo no encontrado"}, status=status.HTTP_404_NOT_FOUND)
 
     def destroy(self, request, *args, **kwargs):
         doc = self.get_object()
 
-        # Remove from Excel
-        try:
-            from .invoice_service import delete_from_excel
-            import re
-            year_match = re.search(r"-(\d{2})$", doc.num_doc or "")
-            year = 2000 + int(year_match.group(1)) if year_match else None
-            delete_from_excel(doc.num_doc, year)
-        except Exception as e:
-            print(f"Excel delete error (non-critical): {e}")
+        # Delete from Drive
+        if doc.s3_key:
+            try:
+                from .invoice_service import delete_drive_file
+                delete_drive_file(doc.s3_key)
+            except Exception as e:
+                print(f"Drive delete error (non-critical): {e}")
 
-        # Delete physical files
-        if doc.local_path and os.path.exists(doc.local_path):
-            os.remove(doc.local_path)
-        docx_path = doc.local_path.replace(".pdf", ".docx") if doc.local_path else None
-        if docx_path and os.path.exists(docx_path):
-            os.remove(docx_path)
+        # Delete local file (legacy)
+        if doc.local_path:
+            for path in (doc.local_path, doc.local_path.replace(".pdf", ".docx")):
+                if path and os.path.exists(path):
+                    try:
+                        os.remove(path)
+                    except OSError:
+                        pass
 
         doc.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)

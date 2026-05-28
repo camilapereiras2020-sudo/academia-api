@@ -34,3 +34,6 @@ typing_extensions==4.15.0
 tzdata==2026.1
 urllib3==2.6.3
 whitenoise==6.9.0
+reportlab==4.5.1
+google-api-python-client==2.196.0
+google-auth==2.53.0
