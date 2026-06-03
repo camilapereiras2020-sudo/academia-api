@@ -71,3 +71,44 @@ class AlumnoViewSet(ModelViewSet):
                         "dias_para_cumpleanos": days,
                     })
         return Response(sorted(upcoming, key=lambda x: x["dias_para_cumpleanos"]))
+
+    @action(detail=True, methods=["post"], url_path="enviar-email")
+    def enviar_email(self, request, pk=None):
+        from modules.core.email_service import send_email
+        alumno = self.get_object()
+        pagador = alumno.pagador
+        if not pagador or not pagador.email:
+            return Response(
+                {"error": "Este alumno no tiene un pagador con email registrado"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        asunto = request.data.get("asunto", "")
+        cuerpo = request.data.get("cuerpo", "")
+        if not asunto or not cuerpo:
+            return Response(
+                {"error": "asunto y cuerpo son obligatorios"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            msg_id = send_email(
+                to=pagador.email,
+                subject=asunto,
+                body=cuerpo,
+                academia_nombre=getattr(request.user, "academia_nombre", "") or "",
+            )
+            return Response({"ok": True, "id": msg_id, "enviado_a": pagador.email})
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_502_BAD_GATEWAY)
+
+    @action(detail=True, methods=["get"], url_path="whatsapp-link")
+    def whatsapp_link(self, request, pk=None):
+        from modules.core.whatsapp_service import whatsapp_link
+        alumno = self.get_object()
+        pagador = alumno.pagador
+        if not pagador or not pagador.telefono:
+            return Response(
+                {"error": "Este alumno no tiene un pagador con teléfono registrado"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        texto = request.query_params.get("texto", "")
+        return Response({"url": whatsapp_link(pagador.telefono, texto), "enviado_a": pagador.telefono})
