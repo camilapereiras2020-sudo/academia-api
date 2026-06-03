@@ -37,7 +37,7 @@ MESES_ES = {
     9: "septiembre", 10: "octubre", 11: "noviembre", 12: "diciembre",
 }
 
-METODOS_FACTURA = {"bizum", "transferencia", "tarjeta", "online"}
+from modules.pagos.constants import METODOS_FACTURA
 
 SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 

@@ -61,9 +61,8 @@ class DocumentoViewSet(ModelViewSet):
             mime_type  = "application/pdf",
         )
 
-        if not pago.num_doc:
-            pago.num_doc = num_doc
-            pago.save(update_fields=["num_doc"])
+        pago.num_doc = num_doc
+        pago.save(update_fields=["num_doc"])
 
         return Response(DocumentoSerializer(doc).data, status=status.HTTP_201_CREATED)
 
