@@ -27,7 +27,27 @@ class PagoViewSet(ModelViewSet):
         return qs
 
     def perform_create(self, serializer):
-        serializer.save(academia=self.request.user)
+        pago = serializer.save(academia=self.request.user)
+        try:
+            from modules.documentos.invoice_service import generate_invoice_for_pago
+            from modules.documentos.models import Documento
+            from .constants import METODOS_FACTURA
+            tipo     = "factura" if pago.metodo.lower() in METODOS_FACTURA else "recibo"
+            num_doc, drive_id = generate_invoice_for_pago(pago, tipo)
+            Documento.objects.create(
+                academia   = pago.academia,
+                pago       = pago,
+                tipo       = tipo,
+                nombre     = f"{num_doc}.pdf",
+                num_doc    = num_doc,
+                s3_key     = drive_id,
+                local_path = "",
+                mime_type  = "application/pdf",
+            )
+            pago.num_doc = num_doc
+            pago.save(update_fields=["num_doc"])
+        except Exception as e:
+            print(f"[invoice] auto-generate failed for pago {pago.id}: {e}")
 
     @action(detail=True, methods=["post"], url_path="marcar-pagado")
     def marcar_pagado(self, request, pk=None):
