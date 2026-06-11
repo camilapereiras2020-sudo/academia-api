@@ -16,6 +16,44 @@ Commits from both repositories are merged chronologically and grouped by week.
 
 ---
 
+## May 13, 2026 — Invoice System Recovery & Platform Infrastructure
+
+> Pre-commit working session (2.5 hrs). Changes from this session were bundled into the May 27 commits. No individual commits exist for this date.
+
+### Milestone: Invoice Pipeline Fixed + Workflow Redesign
+
+**System state at this point:** 12 alumnos · 14 pagadores · 11 grupos · CRM · Empresas · Placement test (120 questions) · Vocab game — all stable. Invoice generation was completely broken.
+
+**5 bugs diagnosed and fixed:**
+
+| File | Problem | Fix |
+|------|---------|-----|
+| `modules/documentos/invoice_service.py:251` | Syntax error — unescaped apostrophe in Mandela quote caused `SyntaxError: unterminated string literal`; module failed to import entirely | Removed apostrophe from the quote string |
+| `modules/documentos/invoice_service.py` | PDF generation crashed on Windows with `CoInitialize error (-2147221008)` — `docx2pdf` uses Windows COM but it was never initialized | Wrapped conversion in `pythoncom.CoInitialize()` / `pythoncom.CoUninitialize()` |
+| `Registro_Ingresos_2026.xlsx` | Excel log file corrupted at binary level (`Bad CRC-32` on internal ZIP/XML); every read/write degraded it further | Deleted the file; system recreates it fresh on next invoice |
+| `modules/pagos/views.py` | `perform_create()` and `marcar_pagado()` both called `_auto_generate_doc()` — saving a payment auto-generated a document after a 4-second delay without user intent | Removed `_auto_generate_doc` calls entirely; generation is now user-initiated only |
+| `modules/documentos/invoice_service.py` | Hard-coded strings lacked accents: `"ingles"` instead of `"inglés"`, `"TERMINOS"` instead of `"TÉRMINOS"` | Fixed strings with explicit `encoding='utf-8'` on file writes |
+
+**Architecture decision — payment workflow redesigned:**
+
+```
+BEFORE:  Save Pago → auto-generates document (4s delay, user has no control)
+AFTER:   Save Pago → instant
+         Mark as paid (Cobrar) → instant
+         Click "Factura" or "Recibo" → generates on demand
+```
+
+**New tooling created:**
+
+| Script | Purpose |
+|--------|---------|
+| `diagnostico_api.py` | Ran 57 system checks; found all 9 issues in this session |
+| `fix_invoice_all.py` | Applied CoInitialize fix, encoding fix, deleted corrupted Excel |
+| `fix_pagos_views.py` | Stripped auto-generation from PagoViewSet |
+| `ripple.py` | "Ripple Effect Analyzer" — system health checker that detects cascading failures before they happen; run `python ripple.py check` or `python ripple.py fix` |
+
+---
+
 ## Week 7 — 2026-05-25 to 2026-05-31
 
 ### Milestone: Full-Stack Launch + PDF Invoicing + Railway/Vercel Deployment
@@ -81,6 +119,7 @@ Commits from both repositories are merged chronologically and grouped by week.
 | Date | Milestone |
 |------|-----------|
 | 2026-04-15 | Academia API initial commit |
+| 2026-05-13 | Invoice pipeline restored (5 bugs fixed); payment/document workflow separated; `ripple.py` diagnostic tool created |
 | 2026-05-27 | Frontend launched; all core pages rebuilt; Railway + Vercel deployments live |
 | 2026-05-28 | PDF invoice generation via ReportLab + Google Drive storage |
 | 2026-06-03 | Contact endpoints (email/WhatsApp) + learning games added |
