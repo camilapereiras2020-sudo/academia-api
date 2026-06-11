@@ -8,6 +8,65 @@ from .serializers import PagoSerializer
 from .constants import METODOS_FACTURA
 
 
+def _send_payment_email(pago, num_doc):
+    from django.conf import settings
+    import resend
+
+    email = getattr(pago.pagador, "email", "") or ""
+    api_key = getattr(settings, "RESEND_API_KEY", "") or ""
+    if not email or not api_key or api_key == "re_placeholder":
+        return
+
+    resend.api_key = api_key
+    metodo_display = (pago.metodo or "").capitalize()
+    alumno_nombre  = pago.alumno.nombre
+    pagador_nombre = pago.pagador.nombre
+    total_fmt      = "{:,.2f}".format(float(pago.total)).replace(",", "X").replace(".", ",").replace("X", ".")
+
+    html = f"""
+    <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;color:#2D2D2D;">
+      <div style="border-bottom:3px solid #B08D57;padding-bottom:12px;margin-bottom:20px;">
+        <h2 style="color:#B08D57;margin:0;">Cami&amp;Co — Confirmación de pago</h2>
+      </div>
+      <p>Estimado/a <strong>{pagador_nombre}</strong>,</p>
+      <p>Hemos registrado correctamente tu pago. A continuación encontrarás el resumen:</p>
+      <table style="width:100%;border-collapse:collapse;margin:20px 0;font-size:14px;">
+        <tr style="background:#F7F5F2;">
+          <td style="padding:10px 12px;border-bottom:1px solid #ddd;"><strong>Alumno/a</strong></td>
+          <td style="padding:10px 12px;border-bottom:1px solid #ddd;">{alumno_nombre}</td>
+        </tr>
+        <tr>
+          <td style="padding:10px 12px;border-bottom:1px solid #ddd;"><strong>Importe</strong></td>
+          <td style="padding:10px 12px;border-bottom:1px solid #ddd;">{total_fmt} €</td>
+        </tr>
+        <tr style="background:#F7F5F2;">
+          <td style="padding:10px 12px;border-bottom:1px solid #ddd;"><strong>Método de pago</strong></td>
+          <td style="padding:10px 12px;border-bottom:1px solid #ddd;">{metodo_display}</td>
+        </tr>
+        <tr>
+          <td style="padding:10px 12px;"><strong>Nº de documento</strong></td>
+          <td style="padding:10px 12px;">{num_doc}</td>
+        </tr>
+      </table>
+      <p>
+        Muchas gracias por confiar en Cami&amp;Co. Es un placer acompañar a
+        <strong>{alumno_nombre}</strong> en su aprendizaje del inglés. 🎉
+      </p>
+      <p style="color:#6B6B6B;font-size:12px;">
+        Si tienes cualquier duda, no dudes en ponerte en contacto con nosotros.
+      </p>
+      <p style="color:#B08D57;margin-top:24px;"><strong>Cami&amp;Co — Academia de inglés</strong></p>
+    </div>
+    """
+
+    resend.Emails.send({
+        "from": settings.DEFAULT_FROM_EMAIL,
+        "to": [email],
+        "subject": f"Confirmación de pago — {num_doc}",
+        "html": html,
+    })
+
+
 class PagoViewSet(ModelViewSet):
     serializer_class = PagoSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -46,6 +105,10 @@ class PagoViewSet(ModelViewSet):
             )
             pago.num_doc = num_doc
             pago.save(update_fields=["num_doc"])
+            try:
+                _send_payment_email(pago, num_doc)
+            except Exception as e:
+                print(f"[email] notification failed for pago {pago.id}: {e}")
         except Exception as e:
             print(f"[invoice] auto-generate failed for pago {pago.id}: {e}")
 

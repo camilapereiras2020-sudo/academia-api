@@ -442,7 +442,7 @@ def generate_invoice_for_pago(pago, tipo="factura"):
 
     es_fac   = metodo.lower() in METODOS_FACTURA if metodo else True
     tipo_doc = "factura" if es_fac else "recibo"
-    prefix   = "CC" if es_fac else "REC"
+    prefix   = "CC" if es_fac else "RE"
     num_doc  = _next_invoice_number(acad, prefix)
 
     fecha = pago.fecha or date.today()
