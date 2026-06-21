@@ -1,18 +1,56 @@
 # DEVLOG — Rangers Academia
 
 Combined development log for **academia-api** (Django/Railway) and **academia-frontend** (React+Vite/Vercel).  
-Commits from both repositories are merged chronologically and grouped by week.
+Commits from both repositories are merged chronologically and grouped by session.
 
 ---
 
-## Week 1 — 2026-04-13 to 2026-04-19
+## Milestones
+
+| Date | Milestone |
+|------|-----------|
+| 2026-04-15 | Academia API initial commit — Django REST API bootstrapped, Docker → SQLite migration, GitHub repo initialized |
+| 2026-04-26 | Passive income brainstorm; Cambridge PDF product concept identified |
+| 2026-05-13 | Invoice pipeline restored (5 bugs fixed); payment/document workflow separated; `ripple.py` diagnostic tool created |
+| 2026-05-27 | Frontend launched; all core pages rebuilt; Railway + Vercel deployments live |
+| 2026-05-28 | PDF invoice generation via ReportLab + Google Drive storage |
+| 2026-06-03 | Contact endpoints (email/WhatsApp) + learning games added |
+| 2026-06-04 | Auto-invoice on payment creation (post_save signal) |
+| 2026-06-10 | Deployment day confirmed live; Claude Code CLI installed; custom domain purchased |
+| 2026-06-11 | Payment dashboard prototype; WhatsApp button; invoice logic; email notification on payment creation |
+| 2026-06-15 | Tech briefing session; social media strategy; WhatsApp templates; file cleanup script; worksheet organizer; WA Business glitch |
+| 2026-06-17 | Adult programme built; FUNDAE calculator; Duet Display setup; screen sharing for teaching |
+
+---
+
+## April 14–15, 2026 — Initial Setup
 
 ### Milestone: Project Bootstrap
 
-| Date | Repo | Author | Commit |
-|------|------|--------|--------|
-| 2026-04-15 | academia-api | camila | **Add gitignore** — Excluded secrets, venv, and build artifacts from version control |
-| 2026-04-15 | academia-api | camila | **Initial commit — Academia API** — Django REST API scaffolded with core models (alumnos, grupos, pagos, pagadores) |
+**What happened:** Academia API created from scratch. Began with Docker-based setup, then migrated to SQLite for simplicity during development. GitHub repository initialized and first commit pushed.
+
+| Date | Repo | Commit |
+|------|------|--------|
+| 2026-04-15 | academia-api | **Add gitignore** — Excluded secrets, venv, and build artifacts from version control |
+| 2026-04-15 | academia-api | **Initial commit — Academia API** — Django REST API scaffolded with core models (alumnos, grupos, pagos, pagadores) |
+
+**Decisions made:**
+- Docker abandoned in favour of local SQLite during dev; Railway handles prod DB
+- Core models scoped to: `Alumno`, `Grupo`, `Pago`, `Pagador`
+
+---
+
+## April 26, 2026 — Passive Income Brainstorm
+
+> Working session focused on business strategy and product ideation, not code commits.
+
+### Milestone: Product Concept — Cambridge PDF Resource
+
+**Ideas explored:** Passive income streams compatible with the academia workload.
+
+**Key outcome:** Identified the Cambridge PDF product as a viable side revenue stream — create and sell structured PDF worksheets/resources aligned to Cambridge English exam levels (A2, B1, B2, C1). Minimal ongoing work once created; distributable via Gumroad or similar.
+
+**Why it fits:** Candela already produces teaching materials weekly; packaging them as a digital product has near-zero marginal cost.
 
 ---
 
@@ -54,74 +92,131 @@ AFTER:   Save Pago → instant
 
 ---
 
-## Week 7 — 2026-05-25 to 2026-05-31
+## Week of May 25–29, 2026 — Full-Stack Launch
 
 ### Milestone: Full-Stack Launch + PDF Invoicing + Railway/Vercel Deployment
 
-| Date | Repo | Author | Commit |
-|------|------|--------|--------|
-| 2026-05-27 | academia-api | camila | **Add CRM/empresas/placement_test modules, invoice numbering, and module fixes** — Extended the API with CRM contacts, company tracking, placement tests, and sequential invoice numbering |
-| 2026-05-27 | academia-api | camila | **Add Railway deployment config and production settings** — Added `railway.toml`, production environment settings, and static/media configuration for Railway |
-| 2026-05-27 | academia-frontend | camila | **Initial commit — React+Vite frontend for academia management system** — Full SPA scaffolded with React Router, Axios, and JWT auth |
-| 2026-05-27 | academia-frontend | camila | **Guard s.registros against null in AsistenciaPage history render** — Fixed crash when attendance record has no registros array |
-| 2026-05-27 | academia-frontend | camila | **Rebuild PagosPage with inline create form and full payment list** — Replaced placeholder with functional payments page: create, list, and filter pagos |
-| 2026-05-27 | academia-frontend | camila | **Rebuild AlumnosPage with improved cards, modal UX, and delete confirmation** — Student cards polished; add/edit modal and two-step delete guard added |
-| 2026-05-27 | academia-frontend | camila | **Rebuild GruposPage with color accents, schedule chips, and delete modal** — Group list redesigned with color-coded cards and schedule tag chips |
-| 2026-05-27 | academia-frontend | camila | **Rebuild PagadoresPage with proper delete modal and polished UX** — Payer list now has consistent card layout, edit flow, and delete confirmation |
-| 2026-05-27 | academia-frontend | camila | **Rebuild DashboardPage with KPI cards, pending payments, and birthdays** — Dashboard rebuilt with revenue summary, pending cobros, and upcoming birthday list |
-| 2026-05-27 | academia-frontend | camila | **Rebuild CRMPage with edit, delete, interaction logging, and search** — CRM rebuilt from scratch: search bar, interaction history, and full CRUD |
-| 2026-05-27 | academia-frontend | camila | **Rebuild remaining pages: Cumpleanos, Documentos, Pendientes, Config, Empresas** — All secondary pages rebuilt with consistent layout and live data |
-| 2026-05-27 | academia-frontend | camila | **Add WhatsApp button to student cards linking to pagador's phone** — Tapping the WA icon opens a pre-filled WhatsApp chat to the student's payer |
-| 2026-05-27 | academia-frontend | camila | **Add vercel.json for SPA routing** — Configured catch-all rewrite so React Router works on Vercel without 404s on refresh |
-| 2026-05-28 | academia-api | camila | **Fix .env: remove corrupted settings.py content and PostgreSQL DATABASE_URL** — Cleaned up .env file that had been accidentally polluted with raw settings |
-| 2026-05-28 | academia-api | camila | **Replace docx/local-disk invoices with ReportLab PDF + Google Drive** — Dropped python-docx and local storage; invoices now generated as PDF with ReportLab and uploaded to Drive |
-| 2026-05-28 | academia-api | camila | **Auto-create 'Rangers Academy Facturas' Drive folder; add credentials to gitignore** — Drive folder is created on first run; service account JSON excluded from repo |
-| 2026-05-28 | academia-api | camila | **Add Google Drive invoice storage with ReportLab PDF generation** — PDFs are signed, uploaded, and a shareable Drive link stored on the Pago record |
-| 2026-05-28 | academia-api | camila | **Increase logo size and improve PDF layout spacing** — Logo scaled up and section spacing tightened for a cleaner invoice look |
-| 2026-05-28 | academia-api | camila | **Support GOOGLE_TOKEN_JSON env var for Railway deployment** — Service account credentials now read from env var so no JSON file is needed on Railway |
-| 2026-05-28 | academia-frontend | camila | **Show error feedback on Cobrar button failure in PendientesPage** — Button now shows a red error message instead of silently failing when the API call fails |
-| 2026-05-29 | academia-api | camila | **Add render.yaml with correct start and build commands** — Alternative Render.com deployment config added alongside the Railway setup |
+| Date | Repo | Commit |
+|------|------|--------|
+| 2026-05-27 | academia-api | **Add CRM/empresas/placement_test modules, invoice numbering, and module fixes** |
+| 2026-05-27 | academia-api | **Add Railway deployment config and production settings** |
+| 2026-05-27 | academia-frontend | **Initial commit — React+Vite frontend for academia management system** |
+| 2026-05-27 | academia-frontend | **Guard s.registros against null in AsistenciaPage history render** |
+| 2026-05-27 | academia-frontend | **Rebuild PagosPage with inline create form and full payment list** |
+| 2026-05-27 | academia-frontend | **Rebuild AlumnosPage with improved cards, modal UX, and delete confirmation** |
+| 2026-05-27 | academia-frontend | **Rebuild GruposPage with color accents, schedule chips, and delete modal** |
+| 2026-05-27 | academia-frontend | **Rebuild PagadoresPage with proper delete modal and polished UX** |
+| 2026-05-27 | academia-frontend | **Rebuild DashboardPage with KPI cards, pending payments, and birthdays** |
+| 2026-05-27 | academia-frontend | **Rebuild CRMPage with edit, delete, interaction logging, and search** |
+| 2026-05-27 | academia-frontend | **Rebuild remaining pages: Cumpleanos, Documentos, Pendientes, Config, Empresas** |
+| 2026-05-27 | academia-frontend | **Add WhatsApp button to student cards linking to pagador's phone** |
+| 2026-05-27 | academia-frontend | **Add vercel.json for SPA routing** |
+| 2026-05-28 | academia-api | **Fix .env: remove corrupted settings.py content and PostgreSQL DATABASE_URL** |
+| 2026-05-28 | academia-api | **Replace docx/local-disk invoices with ReportLab PDF + Google Drive** |
+| 2026-05-28 | academia-api | **Auto-create 'Rangers Academy Facturas' Drive folder; add credentials to gitignore** |
+| 2026-05-28 | academia-api | **Add Google Drive invoice storage with ReportLab PDF generation** |
+| 2026-05-28 | academia-api | **Increase logo size and improve PDF layout spacing** |
+| 2026-05-28 | academia-api | **Support GOOGLE_TOKEN_JSON env var for Railway deployment** |
+| 2026-05-28 | academia-frontend | **Show error feedback on Cobrar button failure in PendientesPage** |
+| 2026-05-29 | academia-api | **Add render.yaml with correct start and build commands** |
 
 ---
 
-## Week 8 — 2026-06-01 to 2026-06-07
+## Week of June 1–7, 2026 — Production Stabilization
 
 ### Milestone: Production Stabilization + Games + Email/WhatsApp Contact
 
-| Date | Repo | Author | Commit |
-|------|------|--------|--------|
-| 2026-06-02 | academia-api | camila | **Fix CORS, CSRF trusted origins, and Django 6.0 STORAGES config for Railway** — Corrected allowed origins list and migrated deprecated `DEFAULT_FILE_STORAGE` to new `STORAGES` dict |
-| 2026-06-02 | academia-frontend | camila | **Fix VITE_API_URL usage in refresh token interceptor** — Axios interceptor was falling back to localhost; now correctly reads `import.meta.env.VITE_API_URL` |
-| 2026-06-03 | academia-api | camila | **Fix invoice numbering system — sync Pago.num_doc with generated PDFs** — Invoice serial number on the Pago model now always matches the number embedded in the PDF |
-| 2026-06-03 | academia-api | camila | **Add email and WhatsApp contact endpoints for alumnos and pagadores** — New `/contactar/` endpoints expose email address and WhatsApp link for students and payers |
-| 2026-06-03 | academia-frontend | camila | **Add Flashcard and Memory Match games** — Two interactive learning games added to the student-facing section |
-| 2026-06-03 | academia-frontend | camila | **Add email buttons, Word Scramble game, fix dashboard** — Email contact buttons added throughout; Word Scramble game added; dashboard KPI calculation fixed |
-| 2026-06-04 | academia-api | camila | **Backfill invoices for Pagos 22 and 23** — Management command run to generate missing PDFs for two payments that pre-dated the auto-invoice feature |
-| 2026-06-04 | academia-api | camila | **Auto-generate invoice PDF on payment creation** — `post_save` signal now triggers PDF generation and Drive upload every time a Pago is created |
-| 2026-06-04 | academia-api | camila | **Test and clean up auto-invoice smoke test (pagos 25-26)** — Smoke test script for the auto-invoice signal cleaned up and removed from the codebase |
-| 2026-06-04 | academia-api | camila | **Update password for Academia2024 user** — Admin password rotated for the shared Academia2024 account |
-| 2026-06-04 | academia-frontend | camila | **Pin Node >=20 for Vite 8 compatibility on Vercel** — Added `engines.node` constraint to `package.json` so Vercel picks Node 20 and Vite 8 builds correctly |
+| Date | Repo | Commit |
+|------|------|--------|
+| 2026-06-02 | academia-api | **Fix CORS, CSRF trusted origins, and Django 6.0 STORAGES config for Railway** |
+| 2026-06-02 | academia-frontend | **Fix VITE_API_URL usage in refresh token interceptor** |
+| 2026-06-03 | academia-api | **Fix invoice numbering system — sync Pago.num_doc with generated PDFs** |
+| 2026-06-03 | academia-api | **Add email and WhatsApp contact endpoints for alumnos and pagadores** |
+| 2026-06-03 | academia-frontend | **Add Flashcard and Memory Match games** |
+| 2026-06-03 | academia-frontend | **Add email buttons, Word Scramble game, fix dashboard** |
+| 2026-06-04 | academia-api | **Backfill invoices for Pagos 22 and 23** |
+| 2026-06-04 | academia-api | **Auto-generate invoice PDF on payment creation** |
+| 2026-06-04 | academia-api | **Test and clean up auto-invoice smoke test (pagos 25-26)** |
+| 2026-06-04 | academia-api | **Update password for Academia2024 user** |
+| 2026-06-04 | academia-frontend | **Pin Node >=20 for Vite 8 compatibility on Vercel** |
 
 ---
 
-## Week 9 — 2026-06-08 to 2026-06-14
+## June 10, 2026 — Deployment Day
 
-### Milestone: Payment Email Notifications
+> Major operational milestone. No new feature commits — this was the day everything was confirmed live and the dev environment was upgraded.
 
-| Date | Repo | Author | Commit |
-|------|------|--------|--------|
-| 2026-06-11 | academia-api | camila | **Fix recibo prefix (REC→RE), add email notification on payment creation** — Receipt serial corrected from `REC-` to `RE-`; payer now receives an email confirmation with the invoice PDF link when a payment is recorded |
+### Milestone: System Confirmed Live + Tooling Upgrade
+
+**What happened:**
+
+- **Railway + Vercel confirmed live** — both backend (Railway) and frontend (Vercel) verified working end-to-end in production
+- **Claude Code CLI installed** — AI-assisted development workflow set up; Claude Code running locally for this project
+- **Custom domain purchased** — domain acquired and pointed at the Vercel frontend
+
+**Significance:** First day the full stack was live for real use, not just deployable. The domain purchase marks the transition from "internal tool" to "product."
 
 ---
 
-## Summary of Major Milestones
+## June 11, 2026 — Payment Dashboard + Invoice Logic
 
-| Date | Milestone |
-|------|-----------|
-| 2026-04-15 | Academia API initial commit |
-| 2026-05-13 | Invoice pipeline restored (5 bugs fixed); payment/document workflow separated; `ripple.py` diagnostic tool created |
-| 2026-05-27 | Frontend launched; all core pages rebuilt; Railway + Vercel deployments live |
-| 2026-05-28 | PDF invoice generation via ReportLab + Google Drive storage |
-| 2026-06-03 | Contact endpoints (email/WhatsApp) + learning games added |
-| 2026-06-04 | Auto-invoice on payment creation (post_save signal) |
-| 2026-06-11 | Email notification to payer on every new payment |
+### Milestone: Payment Email Notifications + Dashboard Prototype
+
+| Date | Repo | Commit |
+|------|------|--------|
+| 2026-06-11 | academia-api | **Fix recibo prefix (REC→RE), add email notification on payment creation** — Receipt serial corrected from `REC-` to `RE-`; payer now receives an email confirmation with the invoice PDF link when a payment is recorded |
+
+**Additional work this session (pre-commit / prototype):**
+
+- Payment dashboard prototype built — visual summary of monthly income, pending cobros, and overdue payments
+- WhatsApp button logic reviewed and refined — confirmed correct phone number formatting (`34XXXXXXXXX`) for Spanish numbers
+- Invoice generation logic audited end-to-end following the June 10 go-live; edge cases identified and queued for next session
+
+---
+
+## June 15, 2026 — Tech Briefing + Strategy + Tooling
+
+> No code commits. Full working session focused on strategy, communication tooling, and file organisation.
+
+### Milestone: Social Media Strategy + WhatsApp Business Setup + Internal Tooling
+
+**Session breakdown:**
+
+**Tech briefing:**
+- Reviewed the full current system stack with a collaborator/student — walked through Django API, React frontend, Railway/Vercel deployment, and Google Drive invoice storage
+
+**Social media strategy:**
+- Drafted a content plan for Rangers Academia's social media presence
+- Identified target platforms and posting cadence for student acquisition
+
+**WhatsApp Business:**
+- Created WhatsApp message templates for payment reminders, invoice delivery, and class confirmations
+- Hit a glitch with WA Business account verification — account flagged during setup; workaround documented, escalation pending
+
+**Internal tooling:**
+- **File cleanup script** — script written to organise the local `academia/` project folder; removes temp files, archives old exports, normalises folder structure
+- **Worksheet organiser** — tool to batch-rename and sort Cambridge worksheet PDFs by level (A2/B1/B2/C1) and topic; feeds into the Cambridge PDF product idea from April 26
+
+---
+
+## June 17, 2026 — Adult Programme + FUNDAE + Teaching Setup
+
+> Session focused on a new revenue stream (adult corporate training) and teaching infrastructure.
+
+### Milestone: Adult Programme Built + FUNDAE Calculator + Duet Display
+
+**Adult programme:**
+- Designed and built the structure for a new adult/corporate English programme within the academia system
+- Separate grupo type and pricing tier for adult students vs. standard academy students
+
+**FUNDAE calculator:**
+- FUNDAE = Fundación Estatal para la Formación en el Empleo (Spanish state body that subsidises employee training)
+- Built a calculator tool to determine how much of a company's training costs are recoverable via FUNDAE credits
+- Relevant for B2B sales to empresas — lets Candela quote net cost after subsidy
+
+**Duet Display + screen sharing:**
+- Duet Display set up to use iPad as a second monitor
+- Screen sharing workflow configured for online teaching — allows student to see the teacher's screen (whiteboard, exercises, materials) during Zoom/Teams sessions
+- Replaces the need for a physical second screen in the teaching setup
+
+---
