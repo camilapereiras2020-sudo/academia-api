@@ -1,2 +1,2 @@
 web: gunicorn config.wsgi:application --bind 0.0.0.0:$PORT
-release: python manage.py migrate --noinput && python manage.py seed_emisores && python manage.py fix_legacy_docs
+release: python manage.py migrate --noinput && python manage.py seed_emisores && python manage.py fix_legacy_docs && python manage.py fix_missing_invoices
