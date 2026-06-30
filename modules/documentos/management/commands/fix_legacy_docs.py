@@ -1,7 +1,10 @@
 """
-Repair Documento records that have no s3_key (legacy local-path docs).
-Regenerates the PDF from the linked Pago and uploads to Drive using the
-EXISTING num_doc — so invoice numbers stay unchanged.
+Repair Documento records that cannot be served:
+  1. s3_key is empty (legacy local-path docs)
+  2. s3_key is set but the Drive file returns 404 (file was deleted)
+
+Regenerates the PDF from the linked Pago and re-uploads to Drive using
+the EXISTING num_doc so invoice numbers stay unchanged.
 
 Usage:
     python manage.py fix_legacy_docs            # fix + report
@@ -13,35 +16,59 @@ from datetime import date
 from django.core.management.base import BaseCommand
 
 from modules.documentos.models import Documento
-from modules.documentos.invoice_service import generate_pdf_bytes, upload_to_drive
+from modules.documentos.invoice_service import (
+    generate_pdf_bytes, upload_to_drive, download_from_drive,
+)
+
+
+def _drive_file_missing(s3_key: str) -> bool:
+    """Return True if the Drive file no longer exists."""
+    if not s3_key:
+        return True
+    try:
+        download_from_drive(s3_key)
+        return False
+    except Exception:
+        return True
 
 
 class Command(BaseCommand):
-    help = "Re-upload legacy Documento records (no s3_key) to Google Drive"
+    help = "Re-upload Documento records with missing or broken Drive files"
 
     def add_arguments(self, parser):
         parser.add_argument(
             "--dry-run", action="store_true",
             help="Report what would be done without making changes",
         )
+        parser.add_argument(
+            "--check-s3", action="store_true",
+            help="Also verify existing s3_keys are reachable (slow — makes Drive API calls)",
+        )
 
     def handle(self, *args, **options):
-        dry = options["dry_run"]
-        prefix = "[DRY RUN] " if dry else ""
+        dry      = options["dry_run"]
+        check_s3 = options["check_s3"]
+        prefix   = "[DRY RUN] " if dry else ""
 
-        broken = Documento.objects.filter(s3_key="").select_related(
+        all_docs = Documento.objects.select_related(
             "pago__pagador", "pago__alumno", "pago__grupo", "pago__emisor",
         )
-        total = broken.count()
-        self.stdout.write(f"{prefix}Found {total} Documento(s) with no s3_key.\n")
 
-        if total == 0:
+        broken = []
+        for doc in all_docs:
+            if not doc.s3_key:
+                broken.append((doc, "no s3_key"))
+            elif check_s3 and _drive_file_missing(doc.s3_key):
+                broken.append((doc, f"Drive 404 for {doc.s3_key[:20]}..."))
+
+        self.stdout.write(f"{prefix}Found {len(broken)} Documento(s) to repair.\n")
+        if not broken:
             return
 
         fixed = skipped = errors = 0
 
-        for doc in broken:
-            self.stdout.write(f"  {doc.num_doc} (id={doc.id}) local_path={doc.local_path!r}")
+        for doc, reason in broken:
+            self.stdout.write(f"  {doc.num_doc} (id={doc.id}) — {reason}")
 
             pago = doc.pago
             if pago is None:
@@ -51,7 +78,12 @@ class Command(BaseCommand):
 
             emisor = pago.emisor
             if emisor is None:
-                self.stdout.write("    → SKIP: Pago has no emisor")
+                from modules.documentos.models import Emisor
+                emisor = Emisor.objects.filter(
+                    academia=pago.academia, slug="camiandco"
+                ).first()
+            if emisor is None:
+                self.stdout.write("    → SKIP: no emisor found")
                 skipped += 1
                 continue
 
@@ -89,7 +121,7 @@ class Command(BaseCommand):
                     total           = pago.total,
                     metodo          = metodo,
                     concepto_libre  = getattr(pago, "concepto_libre", "") or "",
-                    num_doc         = doc.num_doc,   # keep existing number
+                    num_doc         = doc.num_doc,
                     fecha           = fecha,
                     tipo            = doc.tipo,
                 )
@@ -99,7 +131,8 @@ class Command(BaseCommand):
 
                 if dry:
                     self.stdout.write(
-                        f"    → would upload {len(pdf_bytes)}b as {pdf_name!r} to folder {folder_id[:20]}..."
+                        f"    → would upload {len(pdf_bytes)}b as {pdf_name!r} "
+                        f"to folder {folder_id[:20]}..."
                     )
                     fixed += 1
                     continue
@@ -109,7 +142,7 @@ class Command(BaseCommand):
                 )
                 doc.s3_key = file_id
                 doc.save(update_fields=["s3_key"])
-                self.stdout.write(f"    → OK: uploaded {len(pdf_bytes)}b, s3_key={file_id}")
+                self.stdout.write(f"    → OK: {len(pdf_bytes)}b → Drive {file_id}")
                 fixed += 1
 
             except Exception as exc:
