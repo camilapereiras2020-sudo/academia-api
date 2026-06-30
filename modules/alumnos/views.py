@@ -13,11 +13,18 @@ class AlumnoViewSet(ModelViewSet):
 
     def get_queryset(self):
         qs = Alumno.objects.filter(academia=self.request.user)
-        grupo = self.request.query_params.get("grupo")
-        empresa = self.request.query_params.get("empresa")
+        search    = self.request.query_params.get("search")
+        grupo     = self.request.query_params.get("grupo")
+        empresa   = self.request.query_params.get("empresa")
         es_fundae = self.request.query_params.get("es_fundae")
-        tipo = self.request.query_params.get("tipo")  # "empresa", "particular", "fundae"
+        tipo      = self.request.query_params.get("tipo")  # "empresa", "particular", "fundae"
 
+        if search:
+            from django.db.models import Q
+            qs = qs.filter(
+                Q(nombre__icontains=search) |
+                Q(pagador__nombre__icontains=search)
+            )
         if grupo:
             qs = qs.filter(grupo_id=grupo)
         if empresa:
@@ -34,6 +41,22 @@ class AlumnoViewSet(ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(academia=self.request.user)
+
+    @action(detail=True, methods=["post"], url_path="asignar-grupo")
+    def asignar_grupo(self, request, pk=None):
+        alumno = self.get_object()
+        grupo_id = request.data.get("grupo_id")
+        if grupo_id:
+            from modules.grupos.models import Grupo
+            try:
+                grupo = Grupo.objects.get(id=grupo_id, academia=request.user)
+            except Grupo.DoesNotExist:
+                return Response({"error": "Grupo no encontrado"}, status=status.HTTP_404_NOT_FOUND)
+            alumno.grupo = grupo
+        else:
+            alumno.grupo = None
+        alumno.save(update_fields=["grupo"])
+        return Response(AlumnoSerializer(alumno).data)
 
     @action(detail=True, methods=["post"], url_path="duplicar")
     def duplicar(self, request, pk=None):

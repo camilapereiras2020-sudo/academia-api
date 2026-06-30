@@ -24,6 +24,12 @@ class Pago(models.Model):
     serie_id = models.CharField(max_length=10, blank=True)
     iban = models.CharField(max_length=34, blank=True)
     stripe_payment_intent = models.CharField(max_length=100, blank=True)
+    emisor = models.ForeignKey(
+        "documentos.Emisor",
+        on_delete=models.PROTECT,
+        null=True, blank=True,
+        related_name="pagos",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

@@ -1,6 +1,6 @@
 """
 Invoice/Receipt generation — ReportLab PDF + Google Drive storage.
-Files land in: Drive → Facturas {year} → T{n} (…) → {num_doc}.pdf
+Files land in: Drive → <emisor folder> → Facturas {year} → T{n} → {num_doc}.pdf
 """
 import io
 import os
@@ -20,7 +20,7 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload, MediaIoBaseDownload
 from google.oauth2 import service_account
 
-# ── Constants ────────────────────────────────────────────────────────────────
+# ── Colour palette ────────────────────────────────────────────────────────────
 
 GOLD  = colors.HexColor("#B08D57")
 DARK  = colors.HexColor("#2D2D2D")
@@ -28,8 +28,6 @@ GRAY  = colors.HexColor("#6B6B6B")
 LGRAY = colors.HexColor("#959595")
 LGBG  = colors.HexColor("#F7F5F2")
 WHITE = colors.white
-
-IBAN = "ES10 2080 5020 0530 4003 9725"
 
 MESES_ES = {
     1: "enero", 2: "febrero", 3: "marzo", 4: "abril",
@@ -39,16 +37,14 @@ MESES_ES = {
 
 from modules.pagos.constants import METODOS_FACTURA
 
-SCOPES = ["https://www.googleapis.com/auth/drive.file"]
+SCOPES = ["https://www.googleapis.com/auth/drive"]
 
-# Project root (next to manage.py)
 _HERE      = os.path.dirname(__file__)
 _API_DIR   = os.path.dirname(os.path.dirname(_HERE))
 TOKEN_PATH = os.path.join(_API_DIR, ".google-token.json")
-CREDS_PATH = os.path.join(_API_DIR, "google-credentials.json")
 
 
-# ── Google Drive helpers ─────────────────────────────────────────────────────
+# ── Google Drive helpers ──────────────────────────────────────────────────────
 
 def _drive():
     """Return an authenticated Drive service using OAuth2 user credentials.
@@ -83,7 +79,6 @@ def _drive():
     )
     if creds.expired and creds.refresh_token:
         creds.refresh(Request())
-        # Persist refreshed token locally if possible
         if os.path.exists(TOKEN_PATH):
             td.update({"token": creds.token})
             with open(TOKEN_PATH, "w") as f:
@@ -113,20 +108,18 @@ def _trimester(month):
     return "T3 (Septiembre-Diciembre)"
 
 
-def upload_to_drive(pdf_bytes: bytes, filename: str, year: int, month: int) -> str:
+def upload_to_drive(pdf_bytes: bytes, filename: str, year: int, month: int,
+                    folder_id: str = None) -> str:
     """Upload PDF bytes to Drive. Returns the Drive file id.
 
-    Requires GOOGLE_DRIVE_FOLDER_ID env var pointing to a folder in the
-    user's personal Drive that has been shared with the service account
-    (Editor access). Files are stored in year/trimester subfolders.
+    folder_id: root Drive folder for this emisor. Falls back to
+    GOOGLE_DRIVE_FOLDER_ID env var if not provided.
     """
-    root_id = os.environ.get("GOOGLE_DRIVE_FOLDER_ID")
+    root_id = folder_id or os.environ.get("GOOGLE_DRIVE_FOLDER_ID")
     if not root_id:
         raise ValueError(
-            "GOOGLE_DRIVE_FOLDER_ID is not set. "
-            "Create a folder in Google Drive, share it with the service account "
-            "(rangers-academy@storied-precept-452716-v2.iam.gserviceaccount.com), "
-            "copy the folder ID from the URL, and set it in .env."
+            "No Drive folder configured. Set drive_folder_id on the Emisor "
+            "or set GOOGLE_DRIVE_FOLDER_ID env var."
         )
     service  = _drive()
     year_id  = _folder(service, f"Facturas {year}", root_id)
@@ -154,20 +147,31 @@ def delete_drive_file(file_id: str) -> None:
     _drive().files().delete(fileId=file_id).execute()
 
 
-# ── Invoice numbering ────────────────────────────────────────────────────────
+# ── Invoice numbering ─────────────────────────────────────────────────────────
 
-def _next_invoice_number(academia, prefix: str) -> str:
-    """Determine next invoice number by querying the DB (no file-scan)."""
+def _next_invoice_number(emisor, tipo: str) -> str:
+    """Determine next doc number for this emisor+tipo by scanning DB."""
     from modules.documentos.models import Documento
     from modules.pagos.models import Pago
 
+    prefix   = emisor.factura_prefix if tipo == "factura" else emisor.recibo_prefix
+    baseline = emisor.factura_baseline if tipo == "factura" else emisor.recibo_baseline
+
     year_short = str(date.today().year)[2:]
     suffix     = f"-{year_short}"
-    max_num    = 236   # baseline: pre-existing paper invoices
+    max_num    = baseline
 
     for qs in (
-        Documento.objects.filter(academia=academia, num_doc__startswith=prefix, num_doc__endswith=suffix),
-        Pago.objects.filter(academia=academia, num_doc__startswith=prefix, num_doc__endswith=suffix),
+        Documento.objects.filter(
+            academia=emisor.academia,
+            num_doc__startswith=prefix,
+            num_doc__endswith=suffix,
+        ),
+        Pago.objects.filter(
+            academia=emisor.academia,
+            num_doc__startswith=prefix,
+            num_doc__endswith=suffix,
+        ),
     ):
         for num_doc in qs.values_list("num_doc", flat=True):
             try:
@@ -179,7 +183,7 @@ def _next_invoice_number(academia, prefix: str) -> str:
     return f"{prefix}{max_num + 1}{suffix}"
 
 
-# ── Formatting helpers ───────────────────────────────────────────────────────
+# ── Formatting helpers ────────────────────────────────────────────────────────
 
 def _eur(amount) -> str:
     return "{:,.2f} €".format(float(amount)).replace(",", "X").replace(".", ",").replace("X", ".")
@@ -193,10 +197,10 @@ def _ps(name, **kw) -> ParagraphStyle:
     return ParagraphStyle(name, **kw)
 
 
-# ── PDF generation ───────────────────────────────────────────────────────────
+# ── PDF generation ────────────────────────────────────────────────────────────
 
 def generate_pdf_bytes(
-    academia_nombre, academia_dir, academia_ciudad, academia_tel, academia_cif,
+    academia_nombre, academia_dir, academia_ciudad, academia_tel, academia_cif, iban,
     pagador_nombre, pagador_nif, pagador_tel, pagador_email,
     alumno_nombre, grupo_nombre,
     periodo, mensualidad, descuento, extras, total,
@@ -217,8 +221,8 @@ def generate_pdf_bytes(
         leftMargin=2.2*cm, rightMargin=2.2*cm,
         topMargin=2.5*cm, bottomMargin=2.5*cm,
     )
-    W      = A4[0] - 4.4*cm   # usable page width
-    story  = []
+    W     = A4[0] - 4.4*cm
+    story = []
 
     # ── Header ───────────────────────────────────────────────────────────────
     logo_path = os.path.join(os.path.dirname(__file__), "Logo.png")
@@ -228,7 +232,7 @@ def generate_pdf_bytes(
         left_cell = Image(logo_path, width=9*cm, height=5*cm, kind="proportional")
     else:
         left_cell = Paragraph(
-            "<font color='#B08D57' size=22><b>Cami&amp;Co</b></font>",
+            f"<font color='#B08D57' size=22><b>{academia_nombre}</b></font>",
             _ps("logo", leading=26),
         )
 
@@ -267,20 +271,23 @@ def generate_pdf_bytes(
                 parts.append(Paragraph(line, st_val))
         return parts
 
-    emisor = info_block("DE:", [
+    emisor_lines = [
         f"<b>{academia_nombre}</b>",
         academia_dir, academia_ciudad,
         f"Tel: {academia_tel}",
         f"CIF: {academia_cif}",
-        f"IBAN: {IBAN}",
-    ])
+    ]
+    if iban:
+        emisor_lines.append(f"IBAN: {iban}")
+    emisor_block = info_block("DE:", emisor_lines)
+
     pagador_lines = [f"<b>{pagador_nombre}</b>"]
     if pagador_nif:   pagador_lines.append(f"DNI/NIF: {pagador_nif}")
     if pagador_tel:   pagador_lines.append(f"Tel: {pagador_tel}")
     if pagador_email: pagador_lines.append(f"Email: {pagador_email}")
-    para = info_block("PARA:", pagador_lines)
+    para_block = info_block("PARA:", pagador_lines)
 
-    info_tbl = Table([[emisor, para]], colWidths=[W / 2, W / 2])
+    info_tbl = Table([[emisor_block, para_block]], colWidths=[W / 2, W / 2])
     info_tbl.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ("LINEBELOW", (0, 0), (-1, -1), 0, WHITE),
@@ -358,7 +365,7 @@ def generate_pdf_bytes(
         Paragraph("Precio", st_hr),
         Paragraph("Importe", st_hr),
     ]]
-    for i, (desc, cant, precio, importe) in enumerate(items):
+    for desc, cant, precio, importe in items:
         table_data.append([
             Paragraph(desc, st_cel),
             Paragraph(cant, st_cc),
@@ -377,17 +384,17 @@ def generate_pdf_bytes(
                    fontName="Helvetica-Bold", alignment=TA_RIGHT)
         table_data.append(["", "", Paragraph(label, st_s), Paragraph(amount, st_s)])
 
-    n_items    = len(items)
-    total_row  = 1 + n_items + 2
+    n_items   = len(items)
+    total_row = 1 + n_items + 2
 
     style_cmds = [
-        ("BACKGROUND",    (0, 0),        (-1, 0),        DARK),
-        ("TOPPADDING",    (0, 0),        (-1, -1),       5),
-        ("BOTTOMPADDING", (0, 0),        (-1, -1),       5),
-        ("LEFTPADDING",   (0, 0),        (-1, -1),       4),
-        ("RIGHTPADDING",  (0, 0),        (-1, -1),       4),
-        ("GRID",          (0, 0),        (-1, -1),       0.5, colors.HexColor("#DDDDDD")),
-        ("BACKGROUND",    (2, total_row), (3, total_row), GOLD),
+        ("BACKGROUND",    (0, 0),          (-1, 0),          DARK),
+        ("TOPPADDING",    (0, 0),          (-1, -1),         5),
+        ("BOTTOMPADDING", (0, 0),          (-1, -1),         5),
+        ("LEFTPADDING",   (0, 0),          (-1, -1),         4),
+        ("RIGHTPADDING",  (0, 0),          (-1, -1),         4),
+        ("GRID",          (0, 0),          (-1, -1),         0.5, colors.HexColor("#DDDDDD")),
+        ("BACKGROUND",    (2, total_row),  (3, total_row),   GOLD),
     ]
     for i in range(n_items):
         if i % 2 == 0:
@@ -419,7 +426,8 @@ def generate_pdf_bytes(
         "Los honorarios se gestionarán dentro de los <b>primeros 5 días naturales del mes</b>.",
         _ps("ft", fontSize=8, textColor=GRAY, alignment=TA_CENTER, spaceAfter=4, leading=12),
     ))
-    story.append(Paragraph(IBAN, _ps("ib", fontSize=8, textColor=GRAY, alignment=TA_CENTER, spaceAfter=4)))
+    if iban:
+        story.append(Paragraph(iban, _ps("ib", fontSize=8, textColor=GRAY, alignment=TA_CENTER, spaceAfter=4)))
     story.append(Paragraph(
         "Operación exenta de IVA según el art. 20.Uno de la Ley 37/1992",
         _ps("ex", fontSize=8, textColor=LGRAY, alignment=TA_CENTER, fontName="Helvetica-Oblique"),
@@ -429,11 +437,16 @@ def generate_pdf_bytes(
     return buf.getvalue()
 
 
-# ── Main entry point ─────────────────────────────────────────────────────────
+# ── Main entry point ──────────────────────────────────────────────────────────
 
 def generate_invoice_for_pago(pago, tipo="factura"):
-    """Generate PDF for a Pago, upload to Drive. Returns (num_doc, drive_file_id)."""
-    acad    = pago.academia
+    """Generate PDF for a Pago using its Emisor, upload to Drive.
+    Returns (num_doc, drive_file_id).
+    """
+    emisor  = pago.emisor
+    if emisor is None:
+        raise ValueError(f"Pago {pago.id} has no emisor assigned.")
+
     pagador = pago.pagador
     alumno  = pago.alumno
     grupo   = pago.grupo
@@ -442,19 +455,19 @@ def generate_invoice_for_pago(pago, tipo="factura"):
 
     es_fac   = metodo.lower() in METODOS_FACTURA if metodo else True
     tipo_doc = "factura" if es_fac else "recibo"
-    prefix   = "CC" if es_fac else "RE"
-    num_doc  = _next_invoice_number(acad, prefix)
+    num_doc  = _next_invoice_number(emisor, tipo_doc)
 
     fecha = pago.fecha or date.today()
     if isinstance(fecha, str):
         fecha = date.fromisoformat(fecha)
 
     pdf_bytes = generate_pdf_bytes(
-        academia_nombre = acad.academia_nombre or "Camila Pereiras Casal",
-        academia_dir    = acad.academia_dir    or "C/ Pedro Soto Couselo 5, 2 B",
-        academia_ciudad = "36995, Poio (Pontevedra)",
-        academia_tel    = acad.academia_tel    or "698 183 419",
-        academia_cif    = acad.academia_nif    or "39468659S",
+        academia_nombre = emisor.nombre,
+        academia_dir    = emisor.direccion,
+        academia_ciudad = emisor.ciudad,
+        academia_tel    = emisor.telefono,
+        academia_cif    = emisor.nif,
+        iban            = emisor.iban,
         pagador_nombre  = pagador.nombre,
         pagador_nif     = getattr(pagador, "nif",      "") or "",
         pagador_tel     = getattr(pagador, "telefono", "") or "",
@@ -474,6 +487,7 @@ def generate_invoice_for_pago(pago, tipo="factura"):
     )
 
     year_str, month_str = pago.periodo.split("-")
-    drive_id = upload_to_drive(pdf_bytes, f"{num_doc}.pdf", int(year_str), int(month_str))
+    folder_id = emisor.drive_folder_id or os.environ.get("GOOGLE_DRIVE_FOLDER_ID") or ""
+    drive_id  = upload_to_drive(pdf_bytes, f"{num_doc}.pdf", int(year_str), int(month_str), folder_id)
 
     return num_doc, drive_id

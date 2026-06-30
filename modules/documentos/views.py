@@ -76,7 +76,7 @@ class DocumentoViewSet(ModelViewSet):
                 from .invoice_service import download_from_drive
                 pdf_bytes = download_from_drive(doc.s3_key)
                 response  = HttpResponse(pdf_bytes, content_type="application/pdf")
-                response["Content-Disposition"] = f'attachment; filename="{doc.nombre}"'
+                response["Content-Disposition"] = f'inline; filename="{doc.nombre}"'
                 return response
             except Exception as e:
                 return Response(
@@ -91,7 +91,7 @@ class DocumentoViewSet(ModelViewSet):
             return FileResponse(
                 open(path, "rb"),
                 content_type=doc.mime_type,
-                as_attachment=True,
+                as_attachment=False,
                 filename=doc.nombre,
             )
         docx = path.replace(".pdf", ".docx") if path else None
@@ -99,7 +99,7 @@ class DocumentoViewSet(ModelViewSet):
             return FileResponse(
                 open(docx, "rb"),
                 content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                as_attachment=True,
+                as_attachment=False,
                 filename=doc.nombre.replace(".pdf", ".docx"),
             )
 

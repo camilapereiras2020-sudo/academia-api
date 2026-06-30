@@ -6,6 +6,31 @@ User = get_user_model()
 TIPO_CHOICES = [("factura", "Factura"), ("recibo", "Recibo"), ("otro", "Otro")]
 
 
+class Emisor(models.Model):
+    academia         = models.ForeignKey(User, on_delete=models.CASCADE, related_name="emisores")
+    slug             = models.SlugField(max_length=50, unique=True)
+    nombre           = models.CharField(max_length=200)
+    autonoma         = models.CharField(max_length=200)
+    nif              = models.CharField(max_length=20)
+    direccion        = models.CharField(max_length=300)
+    ciudad           = models.CharField(max_length=200)
+    telefono         = models.CharField(max_length=20, blank=True)
+    iban             = models.CharField(max_length=34, blank=True)
+    factura_prefix   = models.CharField(max_length=10, default="CC")
+    recibo_prefix    = models.CharField(max_length=10, default="RE")
+    factura_baseline = models.IntegerField(default=0)
+    recibo_baseline  = models.IntegerField(default=0)
+    drive_folder_id  = models.CharField(max_length=200, blank=True)
+    activo           = models.BooleanField(default=True)
+    created_at       = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["nombre"]
+
+    def __str__(self):
+        return self.nombre
+
+
 class Documento(models.Model):
     academia = models.ForeignKey(
         User, on_delete=models.CASCADE, related_name="documentos"
@@ -17,12 +42,12 @@ class Documento(models.Model):
         blank=True,
         related_name="documentos",
     )
-    tipo = models.CharField(max_length=20, choices=TIPO_CHOICES)
-    nombre = models.CharField(max_length=200)
-    num_doc = models.CharField(max_length=30, blank=True)
-    s3_key = models.CharField(max_length=500, blank=True)
+    tipo       = models.CharField(max_length=20, choices=TIPO_CHOICES)
+    nombre     = models.CharField(max_length=200)
+    num_doc    = models.CharField(max_length=30, blank=True)
+    s3_key     = models.CharField(max_length=500, blank=True)
     local_path = models.CharField(max_length=500, blank=True)
-    mime_type = models.CharField(max_length=100, default="application/pdf")
+    mime_type  = models.CharField(max_length=100, default="application/pdf")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
