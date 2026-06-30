@@ -127,7 +127,11 @@ class PagoViewSet(ModelViewSet):
             except Exception as e:
                 print(f"[email] notification failed for pago {pago.id}: {e}")
         except Exception as e:
-            print(f"[invoice] auto-generate failed for pago {pago.id}: {e}")
+            err = str(e)
+            print(f"[invoice] auto-generate failed for pago {pago.id}: {err}")
+            note = f"⚠ Factura no generada: {err}"
+            pago.notas = ((pago.notas or "") + "\n" + note).strip()
+            pago.save(update_fields=["notas"])
 
     @action(detail=True, methods=["post"], url_path="marcar-pagado")
     def marcar_pagado(self, request, pk=None):
