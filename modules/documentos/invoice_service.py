@@ -29,6 +29,27 @@ LGRAY = colors.HexColor("#959595")
 LGBG  = colors.HexColor("#F7F5F2")
 WHITE = colors.white
 
+# ── Per-emisor PDF themes ─────────────────────────────────────────────────────
+
+THEME_CAMIANDCO = {
+    "accent":     GOLD,
+    "accent_hex": "#B08D57",
+    "bg":         LGBG,
+    "logo_fn":    "Logo.png",
+    "logo_w":     9 * cm,
+    "logo_h":     5 * cm,
+    "quote":      '"It always seems impossible until it\'s done." — Nelson Mandela',
+}
+THEME_RANGERS = {
+    "accent":     colors.HexColor("#314922"),
+    "accent_hex": "#314922",
+    "bg":         colors.HexColor("#F5EDD6"),
+    "logo_fn":    "rangers_logo.png",
+    "logo_w":     3.5 * cm,
+    "logo_h":     3.5 * cm,
+    "quote":      '"The expert in anything was once a beginner." — Helen Hayes',
+}
+
 MESES_ES = {
     1: "enero", 2: "febrero", 3: "marzo", 4: "abril",
     5: "mayo",  6: "junio",   7: "julio", 8: "agosto",
@@ -205,7 +226,17 @@ def generate_pdf_bytes(
     alumno_nombre, grupo_nombre,
     periodo, mensualidad, descuento, extras, total,
     metodo, concepto_libre, num_doc, fecha, tipo,
+    theme: dict = None,
 ) -> bytes:
+
+    t          = theme or THEME_CAMIANDCO
+    accent     = t["accent"]
+    accent_hex = t["accent_hex"]
+    bg         = t["bg"]
+    logo_fn    = t["logo_fn"]
+    logo_w     = t["logo_w"]
+    logo_h     = t["logo_h"]
+    quote      = t["quote"]
 
     if isinstance(fecha, str):
         fecha = date.fromisoformat(fecha)
@@ -225,25 +256,25 @@ def generate_pdf_bytes(
     story = []
 
     # ── Header ───────────────────────────────────────────────────────────────
-    logo_path = os.path.join(os.path.dirname(__file__), "Logo.png")
+    logo_path = os.path.join(os.path.dirname(__file__), logo_fn)
     if not os.path.exists(logo_path):
-        logo_path = os.path.join(os.path.dirname(__file__), "logo.png")
+        logo_path = os.path.join(os.path.dirname(__file__), logo_fn.lower())
     if os.path.exists(logo_path):
-        left_cell = Image(logo_path, width=9*cm, height=5*cm, kind="proportional")
+        left_cell = Image(logo_path, width=logo_w, height=logo_h, kind="proportional")
     else:
         left_cell = Paragraph(
-            f"<font color='#B08D57' size=22><b>{academia_nombre}</b></font>",
+            f"<font color='{accent_hex}' size=22><b>{academia_nombre}</b></font>",
             _ps("logo", leading=26),
         )
 
     right_cell = Paragraph(
-        f"<font color='#B08D57' size=28><b>{title_label}</b></font><br/>"
+        f"<font color='{accent_hex}' size=28><b>{title_label}</b></font><br/>"
         f"<font color='#2D2D2D' size=12><b>N.º {num_doc}</b></font><br/>"
         f"<font color='#2D2D2D' size=11>Fecha: {_date_es(fecha)}</font>",
         _ps("rh", alignment=TA_RIGHT, leading=22),
     )
 
-    hdr = Table([[left_cell, right_cell]], colWidths=[9*cm, W - 9*cm])
+    hdr = Table([[left_cell, right_cell]], colWidths=[logo_w, W - logo_w])
     hdr.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("ALIGN",  (1, 0), (1,  0),  "RIGHT"),
@@ -251,18 +282,18 @@ def generate_pdf_bytes(
     ]))
     story.append(hdr)
     story.append(Spacer(1, 0.4*cm))
-    story.append(HRFlowable(width="100%", thickness=2, color=GOLD, spaceAfter=10))
+    story.append(HRFlowable(width="100%", thickness=2, color=accent, spaceAfter=10))
 
     # ── Quote ─────────────────────────────────────────────────────────────────
     story.append(Paragraph(
-        "<i>\"It always seems impossible until it's done.\" — Nelson Mandela</i>",
+        f"<i>{quote}</i>",
         _ps("q", fontSize=8.5, textColor=LGRAY, alignment=TA_CENTER, spaceAfter=14, leading=13),
     ))
 
     # ── DE / PARA ─────────────────────────────────────────────────────────────
-    st_lbl = _ps("lbl", fontSize=8,   textColor=GOLD, fontName="Helvetica-Bold", leading=12)
-    st_val = _ps("val", fontSize=9.5, textColor=DARK, leading=14)
-    st_dim = _ps("dim", fontSize=9,   textColor=GRAY, leading=13)
+    st_lbl = _ps("lbl", fontSize=8,   textColor=accent, fontName="Helvetica-Bold", leading=12)
+    st_val = _ps("val", fontSize=9.5, textColor=DARK,   leading=14)
+    st_dim = _ps("dim", fontSize=9,   textColor=GRAY,   leading=13)
 
     def info_block(title_txt, lines):
         parts = [Paragraph(title_txt, st_lbl)]
@@ -298,7 +329,7 @@ def generate_pdf_bytes(
     # ── Alumno + Horario ──────────────────────────────────────────────────────
     story.append(Paragraph(
         "ALUMNO/S",
-        _ps("al", fontSize=8, textColor=GOLD, fontName="Helvetica-Bold", spaceAfter=4),
+        _ps("al", fontSize=8, textColor=accent, fontName="Helvetica-Bold", spaceAfter=4),
     ))
     alumno_tbl = Table(
         [[Paragraph(f"<b>{alumno_nombre}</b>",
@@ -306,8 +337,8 @@ def generate_pdf_bytes(
         colWidths=[W],
     )
     alumno_tbl.setStyle(TableStyle([
-        ("BACKGROUND",    (0, 0), (-1, -1), LGBG),
-        ("BOX",           (0, 0), (-1, -1), 1.5, GOLD),
+        ("BACKGROUND",    (0, 0), (-1, -1), bg),
+        ("BOX",           (0, 0), (-1, -1), 1.5, accent),
         ("TOPPADDING",    (0, 0), (-1, -1), 10),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
     ]))
@@ -317,14 +348,14 @@ def generate_pdf_bytes(
         story.append(Spacer(1, 0.25*cm))
         story.append(Paragraph(
             "GRUPO / HORARIO",
-            _ps("gl", fontSize=8, textColor=GOLD, fontName="Helvetica-Bold", spaceAfter=3),
+            _ps("gl", fontSize=8, textColor=accent, fontName="Helvetica-Bold", spaceAfter=3),
         ))
         grupo_tbl = Table(
             [[Paragraph(grupo_nombre, _ps("gn", fontSize=10, textColor=DARK, alignment=TA_CENTER))]],
             colWidths=[W],
         )
         grupo_tbl.setStyle(TableStyle([
-            ("BACKGROUND",    (0, 0), (-1, -1), LGBG),
+            ("BACKGROUND",    (0, 0), (-1, -1), bg),
             ("TOPPADDING",    (0, 0), (-1, -1), 7),
             ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
         ]))
@@ -394,11 +425,11 @@ def generate_pdf_bytes(
         ("LEFTPADDING",   (0, 0),          (-1, -1),         4),
         ("RIGHTPADDING",  (0, 0),          (-1, -1),         4),
         ("GRID",          (0, 0),          (-1, -1),         0.5, colors.HexColor("#DDDDDD")),
-        ("BACKGROUND",    (2, total_row),  (3, total_row),   GOLD),
+        ("BACKGROUND",    (2, total_row),  (3, total_row),   accent),
     ]
     for i in range(n_items):
         if i % 2 == 0:
-            style_cmds.append(("BACKGROUND", (0, i + 1), (-1, i + 1), LGBG))
+            style_cmds.append(("BACKGROUND", (0, i + 1), (-1, i + 1), bg))
     for si in range(3):
         ri = 1 + n_items + si
         style_cmds.append(("SPAN", (0, ri), (1, ri)))
@@ -416,7 +447,7 @@ def generate_pdf_bytes(
 
     # ── Footer ────────────────────────────────────────────────────────────────
     story.append(Spacer(1, 0.8*cm))
-    story.append(HRFlowable(width="100%", thickness=1.5, color=GOLD, spaceAfter=6))
+    story.append(HRFlowable(width="100%", thickness=1.5, color=accent, spaceAfter=6))
     story.append(Paragraph(
         "TÉRMINOS DE PAGO",
         _ps("fp", fontSize=8, fontName="Helvetica-Bold", textColor=DARK,
@@ -461,6 +492,8 @@ def generate_invoice_for_pago(pago, tipo="factura"):
     if isinstance(fecha, str):
         fecha = date.fromisoformat(fecha)
 
+    theme = THEME_RANGERS if getattr(emisor, "slug", "") == "rangers" else THEME_CAMIANDCO
+
     pdf_bytes = generate_pdf_bytes(
         academia_nombre = emisor.nombre,
         academia_dir    = emisor.direccion,
@@ -484,6 +517,7 @@ def generate_invoice_for_pago(pago, tipo="factura"):
         num_doc         = num_doc,
         fecha           = fecha,
         tipo            = tipo_doc,
+        theme           = theme,
     )
 
     year_str, month_str = pago.periodo.split("-")
