@@ -15,6 +15,7 @@ class Emisor(models.Model):
     direccion        = models.CharField(max_length=300)
     ciudad           = models.CharField(max_length=200)
     telefono         = models.CharField(max_length=20, blank=True)
+    email            = models.CharField(max_length=200, blank=True)
     iban             = models.CharField(max_length=34, blank=True)
     factura_prefix   = models.CharField(max_length=10, default="CC")
     recibo_prefix    = models.CharField(max_length=10, default="RE")

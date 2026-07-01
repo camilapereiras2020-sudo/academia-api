@@ -221,7 +221,8 @@ def _ps(name, **kw) -> ParagraphStyle:
 # ── PDF generation ────────────────────────────────────────────────────────────
 
 def generate_pdf_bytes(
-    academia_nombre, academia_dir, academia_ciudad, academia_tel, academia_cif, iban,
+    academia_nombre, academia_autonoma, academia_dir, academia_ciudad,
+    academia_tel, academia_email, academia_cif, iban,
     pagador_nombre, pagador_nif, pagador_tel, pagador_email,
     alumno_nombre, grupo_nombre,
     periodo, mensualidad, descuento, extras, total,
@@ -304,9 +305,11 @@ def generate_pdf_bytes(
 
     emisor_lines = [
         f"<b>{academia_nombre}</b>",
-        academia_dir, academia_ciudad,
+        academia_autonoma,
+        f"NIF: {academia_cif}",
+        f"{academia_dir}, {academia_ciudad}",
         f"Tel: {academia_tel}",
-        f"CIF: {academia_cif}",
+        academia_email,
     ]
     if iban:
         emisor_lines.append(f"IBAN: {iban}")
@@ -495,12 +498,14 @@ def generate_invoice_for_pago(pago, tipo="factura"):
     theme = THEME_RANGERS if getattr(emisor, "slug", "") == "rangers" else THEME_CAMIANDCO
 
     pdf_bytes = generate_pdf_bytes(
-        academia_nombre = emisor.nombre,
-        academia_dir    = emisor.direccion,
-        academia_ciudad = emisor.ciudad,
-        academia_tel    = emisor.telefono,
-        academia_cif    = emisor.nif,
-        iban            = emisor.iban,
+        academia_nombre   = emisor.nombre,
+        academia_autonoma = emisor.autonoma,
+        academia_dir      = emisor.direccion,
+        academia_ciudad   = emisor.ciudad,
+        academia_tel      = emisor.telefono,
+        academia_email    = getattr(emisor, "email", "") or "",
+        academia_cif      = emisor.nif,
+        iban              = emisor.iban,
         pagador_nombre  = pagador.nombre,
         pagador_nif     = getattr(pagador, "nif",      "") or "",
         pagador_tel     = getattr(pagador, "telefono", "") or "",
