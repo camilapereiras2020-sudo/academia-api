@@ -28,16 +28,16 @@ from modules.documentos.invoice_service import _credentials
 
 DEFAULT_SPREADSHEET_ID = "1pXh-ad0QYrCFvCTB6s-hVB0AdxKFYC745YZFEY53qZ4"  # "Rangers Academy — Importación de alumnos"
 TAB_TITLE = "Alumnos"
-DATA_RANGE = f"{TAB_TITLE}!A3:U"
+DATA_RANGE = f"{TAB_TITLE}!A3:V"
 
 API_BASE = "https://academia-api-production-db7a.up.railway.app/api/v1/"
 
 # column order must match create_import_template.py's COLUMNS list
-COL_NOMBRE_ALUMNO, COL_APELLIDO_ALUMNO, COL_FECHA_NAC, COL_TEL_ALUMNO, COL_EMAIL_ALUMNO, \
-    COL_NIVEL, COL_AVISO_CUMPLE, COL_NOTAS_ALUMNO, COL_NOMBRE_PAGADOR, COL_NIF_PAGADOR, \
-    COL_TEL_PAGADOR, COL_EMAIL_PAGADOR, COL_METODO, COL_FRECUENCIA, COL_IBAN, \
-    COL_NOTAS_PAGADOR, COL_NOMBRE_GRUPO, COL_NIVEL_GRUPO, COL_TARIFA, COL_AULA, \
-    COL_HORARIO = range(21)
+COL_NOMBRE_ALUMNO, COL_APELLIDO_ALUMNO, COL_FECHA_NAC, COL_DNI_ALUMNO, COL_TEL_ALUMNO, \
+    COL_EMAIL_ALUMNO, COL_NIVEL, COL_AVISO_CUMPLE, COL_NOTAS_ALUMNO, COL_NOMBRE_PAGADOR, \
+    COL_NIF_PAGADOR, COL_TEL_PAGADOR, COL_EMAIL_PAGADOR, COL_METODO, COL_FRECUENCIA, \
+    COL_IBAN, COL_NOTAS_PAGADOR, COL_NOMBRE_GRUPO, COL_NIVEL_GRUPO, COL_TARIFA, COL_AULA, \
+    COL_HORARIO = range(22)
 
 DIA_MAP = {"lun": 0, "mar": 1, "mie": 2, "jue": 3, "vie": 4, "sab": 5}
 HORARIO_BLOCK_RE = re.compile(r"^(.+?)\s+(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})$")
@@ -128,6 +128,7 @@ def main():
     parser.add_argument("--sheet-id", default=DEFAULT_SPREADSHEET_ID, help="Google Sheet spreadsheet ID")
     parser.add_argument("--api-base", default=API_BASE, help="Platform API base URL")
     parser.add_argument("--dry-run", action="store_true", help="Parse and report without calling the API")
+    parser.add_argument("--row", type=int, help="Only import this one sheet row (1-indexed, e.g. 3 for the first data row)")
     args = parser.parse_args()
 
     if not args.sheet_id:
@@ -138,6 +139,12 @@ def main():
     if not rows:
         print("Sheet has no data rows.")
         return
+    if args.row:
+        offset = args.row - 3
+        if offset < 0 or offset >= len(rows):
+            print(f"Row {args.row} is out of range.")
+            sys.exit(1)
+        rows = [rows[offset]]
 
     email = input("Platform email: ").strip()
     password = getpass.getpass("Platform password: ")
@@ -154,7 +161,7 @@ def main():
 
     created, skipped, errors = 0, 0, []
 
-    for i, row in enumerate(rows, start=3):  # 1-indexed sheet row number, data starts at row 3
+    for i, row in enumerate(rows, start=args.row or 3):  # 1-indexed sheet row number, data starts at row 3
         nombre_pila = _cell(row, COL_NOMBRE_ALUMNO)
         if not nombre_pila:
             continue  # blank row
@@ -209,6 +216,7 @@ def main():
                 alumno = api.post("alumnos/", {
                     "nombre": nombre_alumno,
                     "fecha_nacimiento": parse_fecha(_cell(row, COL_FECHA_NAC)),
+                    "dni": _cell(row, COL_DNI_ALUMNO),
                     "telefono": _cell(row, COL_TEL_ALUMNO),
                     "email": _cell(row, COL_EMAIL_ALUMNO),
                     "nivel": _cell(row, COL_NIVEL),

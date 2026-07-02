@@ -34,6 +34,7 @@ COLUMNS = [
     ("nombre_alumno",     "ALUMNO"),
     ("apellido_alumno",   "ALUMNO"),
     ("fecha_nacimiento",  "ALUMNO"),
+    ("dni_alumno",        "ALUMNO"),
     ("telefono_alumno",   "ALUMNO"),
     ("email_alumno",      "ALUMNO"),
     ("nivel",             "ALUMNO"),

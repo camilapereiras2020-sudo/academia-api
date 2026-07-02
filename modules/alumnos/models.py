@@ -9,6 +9,7 @@ class Alumno(models.Model):
     fecha_nacimiento = models.DateField(null=True, blank=True)
     telefono = models.CharField(max_length=20, blank=True)
     email = models.EmailField(blank=True)
+    dni = models.CharField(max_length=20, blank=True)
     aviso_cumple_dias = models.PositiveIntegerField(null=True, blank=True)
     grupo = models.ForeignKey(
         "grupos.Grupo", on_delete=models.SET_NULL,
