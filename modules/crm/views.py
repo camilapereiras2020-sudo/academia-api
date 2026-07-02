@@ -1,3 +1,5 @@
+import logging
+
 from rest_framework import permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -6,6 +8,9 @@ from django.db.models import Count, Q
 from django.utils import timezone
 from .models import Lead, Interaccion
 from .serializers import LeadSerializer, LeadListSerializer, InteraccionSerializer
+from .sheets_service import append_contacto_row
+
+logger = logging.getLogger(__name__)
 
 
 class LeadViewSet(ModelViewSet):
@@ -24,7 +29,11 @@ class LeadViewSet(ModelViewSet):
         return qs
 
     def perform_create(self, serializer):
-        serializer.save(academia=self.request.user)
+        lead = serializer.save(academia=self.request.user)
+        try:
+            append_contacto_row(lead)
+        except Exception:
+            logger.exception("Failed to append lead %s to Contactos sheet", lead.id)
 
     @action(detail=False, methods=["get"], url_path="dashboard")
     def dashboard(self, request):

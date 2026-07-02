@@ -5,12 +5,11 @@ User = get_user_model()
 
 ORIGEN_CHOICES = [
     ("telefono", "Teléfono"),
-    ("boca_a_boca", "Boca a boca"),
-    ("en_persona", "En persona"),
-    ("test_nivel", "Test de nivel"),
+    ("whatsapp", "WhatsApp"),
     ("instagram", "Instagram"),
-    ("email", "Email"),
-    ("otro", "Otro"),
+    ("facebook", "Facebook"),
+    ("recomendacion", "Recomendación"),
+    ("web", "Web"),
 ]
 
 ETAPA_CHOICES = [
@@ -24,11 +23,10 @@ ETAPA_CHOICES = [
 ]
 
 OBJETIVO_CHOICES = [
+    ("general", "General"),
     ("cambridge", "Cambridge"),
     ("ib", "IB"),
-    ("general", "General"),
-    ("conversacion", "Conversación"),
-    ("otro", "Otro"),
+    ("adultos", "Adultos"),
 ]
 
 TIPO_INTERACCION_CHOICES = [
