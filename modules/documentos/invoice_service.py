@@ -67,8 +67,8 @@ TOKEN_PATH = os.path.join(_API_DIR, ".google-token.json")
 
 # ── Google Drive helpers ──────────────────────────────────────────────────────
 
-def _drive():
-    """Return an authenticated Drive service using OAuth2 user credentials.
+def _credentials():
+    """Return authenticated OAuth2 user credentials (Drive/Sheets scope).
 
     Token source priority:
       1. GOOGLE_TOKEN_JSON env var (Railway / production)
@@ -105,7 +105,12 @@ def _drive():
             with open(TOKEN_PATH, "w") as f:
                 json.dump(td, f)
 
-    return build("drive", "v3", credentials=creds, cache_discovery=False)
+    return creds
+
+
+def _drive():
+    """Return an authenticated Drive service using OAuth2 user credentials."""
+    return build("drive", "v3", credentials=_credentials(), cache_discovery=False)
 
 
 def _folder(service, name, parent_id=None):

@@ -24,7 +24,8 @@ class AlumnoSerializer(serializers.ModelSerializer):
     class Meta:
         model = Alumno
         fields = [
-            "id", "nombre", "fecha_nacimiento", "fnac", "grupo", "grupo_nombre",
+            "id", "nombre", "fecha_nacimiento", "fnac", "telefono", "email",
+            "aviso_cumple_dias", "grupo", "grupo_nombre",
             "grupos_detalle", "pagador", "pagador_nombre", "empresa", "empresa_nombre",
             "es_fundae", "nivel", "notas", "activo", "created_at",
         ]

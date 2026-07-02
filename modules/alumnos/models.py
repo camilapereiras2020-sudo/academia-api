@@ -7,6 +7,9 @@ class Alumno(models.Model):
     academia = models.ForeignKey(User, on_delete=models.CASCADE, related_name="alumnos")
     nombre = models.CharField(max_length=200)
     fecha_nacimiento = models.DateField(null=True, blank=True)
+    telefono = models.CharField(max_length=20, blank=True)
+    email = models.EmailField(blank=True)
+    aviso_cumple_dias = models.PositiveIntegerField(null=True, blank=True)
     grupo = models.ForeignKey(
         "grupos.Grupo", on_delete=models.SET_NULL,
         null=True, blank=True, related_name="alumnos"
