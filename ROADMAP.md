@@ -28,6 +28,15 @@ Feature ideas captured for future work. Not scheduled — this is a backlog, not
 - Homework tracker — what was assigned, due dates, completion status
 - Per-student "struggle tracker" — flag topics/skills a specific student is having trouble with, visible over time
 
+**Status (2026-07-04):** Lesson log, homework tracker, and struggle tracker are built (`/grupos/:id` page, `modules/clases` app). Materials upload is still deferred — implementation notes below for whenever it's picked up.
+
+**Materials upload — implementation notes (researched, not built):**
+- The existing Drive integration (`modules/documentos/invoice_service.py`) is **OAuth2 user-delegated credentials**, not a service account — sourced from `GOOGLE_TOKEN_JSON` env var (prod) or `.google-token.json` (local), refresh-token based, scope `https://www.googleapis.com/auth/drive`. Any reuse needs to account for this (token expiry/revocation tied to whichever human account authorized it, quota is that user's personal Drive quota).
+- `upload_to_drive()`/`download_from_drive()` in that file are invoice-specific — hardcoded `application/pdf` mimetype and a fixed `Facturas {year}/T{n}` folder path baked in. Materials need new/generalized upload+download functions (arbitrary mimetype, arbitrary folder path), reusing only the lower-level `_credentials()`/`_drive()`/`_folder()` helpers.
+- The Rangers root Drive folder is `Emisor.objects.get(slug="rangers").drive_folder_id` (id `17xDVHjzwsvaRIVhSiNAVLlFeNF-d7tF-`) — code comments call it "Rangers-Invoice", not literally "Rangers Academy Facturas" (that string only appears in a DEVLOG changelog blurb). A `Materiales/{grupo_nombre}` subfolder would nest under this same root via two `_folder()` calls.
+- `Documento` (the existing invoice/receipt model) has **no FK to `Grupo`** and its fields (`tipo` choices `factura/recibo/otro`, `pago` FK, `num_doc`) are invoice-shaped — reusing it as-is doesn't cleanly support "material tied to a grupo." Needs either a new `Material` model (grupo FK, nombre, drive_file_id, mime_type, uploaded_at) or a `grupo` FK + new `tipo` choice added to `Documento`. Leaning toward a new model to keep invoicing and class materials decoupled — decide before building.
+- No drag-and-drop library or `<input type="file">`/FormData pattern exists anywhere in the frontend yet — this is a from-scratch build on both ends, not a refactor of an existing pattern.
+
 **Why:** Consolidates what's probably currently tracked in notes/memory/paper into one place tied to the actual class record.
 
 ---
