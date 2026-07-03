@@ -38,6 +38,7 @@ LOCAL_APPS = [
     "modules.crm",
     "modules.placement_test",
     "modules.empresas",
+    "modules.clases",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS

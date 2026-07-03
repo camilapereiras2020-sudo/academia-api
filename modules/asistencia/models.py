@@ -11,6 +11,7 @@ class Sesion(models.Model):
     fecha = models.DateField()
     hora = models.TimeField(null=True, blank=True)
     notas = models.TextField(blank=True)
+    contenido = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

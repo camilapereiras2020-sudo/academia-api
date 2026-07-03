@@ -15,4 +15,5 @@ urlpatterns = [
     path("api/v1/", include("modules.crm.urls")),
     path("api/v1/", include("modules.placement_test.urls")),
     path("api/v1/", include("modules.empresas.urls")),
+    path(API_PREFIX + "clases/", include("modules.clases.urls")),
 ]

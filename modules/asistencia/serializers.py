@@ -14,7 +14,7 @@ class SesionSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Sesion
-        fields = ["id", "grupo", "grupo_nombre", "fecha", "hora", "notas", "registros", "created_at"]
+        fields = ["id", "grupo", "grupo_nombre", "fecha", "hora", "notas", "contenido", "registros", "created_at"]
         read_only_fields = ["id", "created_at"]
 
     def create(self, validated_data):

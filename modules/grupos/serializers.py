@@ -4,7 +4,7 @@ from .models import Grupo
 
 
 class GrupoSerializer(serializers.ModelSerializer):
-    num_alumnos = serializers.SerializerMethodField()
+    alumnos_count = serializers.SerializerMethodField()
     tipo_cobro_display = serializers.CharField(source="get_tipo_cobro_display", read_only=True)
 
     class Meta:
@@ -12,9 +12,9 @@ class GrupoSerializer(serializers.ModelSerializer):
         fields = [
             "id", "nombre", "nivel", "tipo_cobro", "tipo_cobro_display",
             "tarifa", "precio_hora", "aula", "color_idx", "horarios",
-            "num_alumnos", "created_at",
+            "alumnos_count", "created_at",
         ]
         read_only_fields = ["id", "created_at"]
 
-    def get_num_alumnos(self, obj):
+    def get_alumnos_count(self, obj):
         return obj.alumnos.count()
