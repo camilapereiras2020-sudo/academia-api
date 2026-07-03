@@ -32,7 +32,17 @@ class LeadSerializer(serializers.ModelSerializer):
         extra_kwargs = {
             "telefono": {"required": False, "allow_blank": True},
             "objetivo": {"required": False},
+            "nombre_contacto": {"required": False, "allow_blank": True},
         }
+
+    def validate(self, attrs):
+        es_adulto = attrs.get("es_adulto", getattr(self.instance, "es_adulto", False))
+        nombre_contacto = attrs.get("nombre_contacto", getattr(self.instance, "nombre_contacto", ""))
+        if not es_adulto and not nombre_contacto.strip():
+            raise serializers.ValidationError(
+                {"nombre_contacto": "Este campo es obligatorio salvo que el alumno sea adulto."}
+            )
+        return attrs
 
     def get_alerta(self, obj):
         return obj.horas_sin_mover > 24

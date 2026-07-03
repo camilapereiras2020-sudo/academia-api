@@ -43,7 +43,9 @@ class Lead(models.Model):
     academia = models.ForeignKey(User, on_delete=models.CASCADE, related_name="leads")
 
     # Datos obligatorios
-    nombre_contacto = models.CharField(max_length=200)
+    # nombre_contacto es obligatorio salvo que es_adulto=True (validado en el serializer,
+    # ya que blank=True aqui es necesario para permitir el caso condicional).
+    nombre_contacto = models.CharField(max_length=200, blank=True)
     nombre_alumno = models.CharField(max_length=200)
     edad_alumno = models.PositiveIntegerField(null=True, blank=True)
     curso_escolar = models.CharField(max_length=50, blank=True)
