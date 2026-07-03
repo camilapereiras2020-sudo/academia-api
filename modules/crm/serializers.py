@@ -47,7 +47,7 @@ class LeadListSerializer(serializers.ModelSerializer):
         model = Lead
         fields = [
             "id", "nombre_contacto", "nombre_alumno", "edad_alumno",
-            "telefono", "objetivo", "es_adulto", "etapa", "etapa_display",
+            "telefono", "objetivo", "es_adulto", "alumno", "etapa", "etapa_display",
             "origen_display", "alerta", "proximo_seguimiento",
             "created_at", "updated_at",
         ]

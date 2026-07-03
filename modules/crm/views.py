@@ -90,6 +90,12 @@ class LeadViewSet(ModelViewSet):
 
         lead = self.get_object()
 
+        if lead.alumno_id:
+            return Response(
+                {"error": "Este lead ya ha sido matriculado."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         grupo_id = request.data.get("grupo_id")
         mensualidad = request.data.get("mensualidad")
         fecha_inicio = request.data.get("fecha_inicio")
@@ -130,7 +136,10 @@ class LeadViewSet(ModelViewSet):
         return Response({
             "lead": LeadSerializer(lead).data,
             "alumno_id": alumno.id,
+            "alumno_nombre": alumno.nombre,
             "pagador_id": pagador.id,
+            "pagador_nombre": pagador.nombre,
+            "pagador_autocompletado": lead.es_adulto and lead.pagador_es_alumno,
         })
 
 
