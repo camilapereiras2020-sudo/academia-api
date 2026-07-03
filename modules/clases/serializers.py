@@ -1,3 +1,4 @@
+from django.db import transaction
 from rest_framework import serializers
 from .models import Tarea, TareaCompletada, NotaDificultad
 
@@ -24,14 +25,23 @@ class TareaSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         completados_data = self.context["request"].data.get("completados", [])
-        tarea = Tarea.objects.create(**validated_data)
+        seen_alumnos = set()
         for c in completados_data:
-            TareaCompletada.objects.create(
-                tarea=tarea,
-                alumno_id=c["alumno"],
-                estado=c.get("estado", "pendiente"),
-                nota=c.get("nota", ""),
-            )
+            if c["alumno"] in seen_alumnos:
+                raise serializers.ValidationError(
+                    {"completados": f"El alumno {c['alumno']} aparece más de una vez."}
+                )
+            seen_alumnos.add(c["alumno"])
+
+        with transaction.atomic():
+            tarea = Tarea.objects.create(**validated_data)
+            for c in completados_data:
+                TareaCompletada.objects.create(
+                    tarea=tarea,
+                    alumno_id=c["alumno"],
+                    estado=c.get("estado", "pendiente"),
+                    nota=c.get("nota", ""),
+                )
         return tarea
 
 
