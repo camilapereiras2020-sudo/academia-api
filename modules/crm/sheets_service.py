@@ -22,6 +22,7 @@ def append_contacto_row(lead):
         lead.get_origen_display(),
         lead.etapa,
         lead.notas,
+        "Sí" if lead.es_adulto else "No",
     ]
     sheets.spreadsheets().values().append(
         spreadsheetId=SPREADSHEET_ID, range=f"{TAB_TITLE}!A1",

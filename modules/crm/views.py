@@ -100,9 +100,14 @@ class LeadViewSet(ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        if lead.es_adulto and lead.pagador_es_alumno:
+            pagador_nombre = lead.nombre_alumno
+        else:
+            pagador_nombre = lead.nombre_contacto
+
         pagador, _ = Pagador.objects.get_or_create(
             academia=request.user,
-            nombre=lead.nombre_contacto,
+            nombre=pagador_nombre,
             defaults={
                 "telefono": lead.telefono,
                 "email": lead.email,

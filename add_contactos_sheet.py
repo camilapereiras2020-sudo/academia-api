@@ -20,6 +20,7 @@ TAB_TITLE = "Contactos"
 COLUMNS = [
     "fecha", "nombre_padre_madre", "nombre_alumno", "telefono", "email",
     "edad_alumno", "curso_escolar", "objetivo", "origen", "etapa_crm", "notas",
+    "es_adulto",
 ]
 
 OBJETIVO_OPTIONS = ["General", "Cambridge", "IB", "Adultos"]
@@ -108,6 +109,7 @@ def main():
     data_validation("objetivo", OBJETIVO_OPTIONS)
     data_validation("origen", ORIGEN_OPTIONS)
     data_validation("etapa_crm", ETAPA_OPTIONS)
+    data_validation("es_adulto", ["Sí", "No"])
 
     for col_name in TEXT_FORMAT_COLUMNS:
         idx = _col_index(col_name)

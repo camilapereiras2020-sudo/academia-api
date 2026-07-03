@@ -50,6 +50,13 @@ class Lead(models.Model):
     telefono = models.CharField(max_length=20, blank=True)
     objetivo = models.CharField(max_length=20, choices=OBJETIVO_CHOICES, default="general")
 
+    # Adulto / autopago
+    es_adulto = models.BooleanField(default=False)
+    pagador_es_alumno = models.BooleanField(
+        default=False,
+        help_text="Si es_adulto=True y el alumno paga por si mismo, autocompleta el pagador con sus propios datos al matricular.",
+    )
+
     # Datos opcionales
     email = models.EmailField(blank=True)
     nivel_estimado = models.CharField(max_length=10, blank=True)
