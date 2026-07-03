@@ -20,6 +20,11 @@ Commits from both repositories are merged chronologically and grouped by session
 | 2026-06-11 | Payment dashboard prototype; WhatsApp button; invoice logic; email notification on payment creation |
 | 2026-06-15 | Tech briefing session; social media strategy; WhatsApp templates; file cleanup script; worksheet organizer; WA Business glitch |
 | 2026-06-17 | Adult programme built; FUNDAE calculator; Duet Display setup; screen sharing for teaching |
+| 2026-06-21 | DEVLOG comprehensive rewrite (both repos) |
+| 2026-06-30 | Multi-emisor invoicing (Cami&Co + Rangers Academy); modal positioning bug fixed app-wide; invoice failure surfacing |
+| 2026-07-01 | Rangers Academy PDF theme; autónoma name/email on invoices; ensure_superuser deploy command |
+| 2026-07-02 | Google Sheets bulk import tool for alumnos; dni field added; Railway release-phase Procfile bug fixed |
+| 2026-07-03 | CRM adult/self-pay support (`es_adulto`) end-to-end: form fields, Contactos sheet export, auto-fill pagador, Matricular button, conditional validation |
 
 ---
 
@@ -218,5 +223,144 @@ AFTER:   Save Pago → instant
 - Duet Display set up to use iPad as a second monitor
 - Screen sharing workflow configured for online teaching — allows student to see the teacher's screen (whiteboard, exercises, materials) during Zoom/Teams sessions
 - Replaces the need for a physical second screen in the teaching setup
+
+---
+
+## June 21, 2026 — DEVLOG Rewrite
+
+| Date | Repo | Commit |
+|------|------|--------|
+| 2026-06-21 | academia-api | **DEVLOG: comprehensive rewrite with milestones table and missing sessions** |
+| 2026-06-21 | academia-frontend | **Add DEVLOG.md — full frontend development log with milestones table** |
+
+**What happened:** Both repos' development logs backfilled in full for the first time, covering everything from the April 14–15 bootstrap through June 11. Milestones tables added to the top of each file for fast scanning.
+
+---
+
+## June 30, 2026 — Multi-Emisor Invoicing + App-Wide Modal Bug Fix
+
+### Milestone: Rangers Academy Becomes a Second Invoicing Entity + Critical UI Bug Fixed
+
+**System context:** Up to this point, all invoices were generated under a single hardcoded issuer ("Cami&Co"). Rangers Academia needed to invoice under its own name/NIF as a second entity issuing from the same system.
+
+| Date | Repo | Commit |
+|------|------|--------|
+| 2026-06-30 | academia-api | **Multi-emisor invoices, Drive upload, grupos_detalle fix, modal repairs** |
+| 2026-06-30 | academia-api | **Hotfix: seed_emisores in release phase; fix_legacy_docs handles Drive 404s** |
+| 2026-06-30 | academia-api | **Surface invoice generation failures in pago notas field** |
+| 2026-06-30 | academia-api | **fix: seed Drive folder IDs correctly; regenerate missing invoices on deploy** |
+| 2026-06-30 | academia-frontend | **Fix modal positioning and Descargar button behaviour** |
+| 2026-06-30 | academia-frontend | **feat(documentos): show creation datetime on every document row** |
+
+**New `Emisor` model (multi-tenant invoicing):**
+- Stores per-issuer company info: `nombre`, NIF, IBAN, Drive folder ID, invoice-number prefix/baseline
+- `Pago` gains a FK to `Emisor` so every payment records which entity issued it
+- `invoice_service.generate_invoice_for_pago` now reads all fields from the linked `Emisor` instead of hardcoded "Cami&Co" strings; `_next_invoice_number` is keyed per-emisor prefix
+- `seed_emisores` management command upserts both Cami&Co and Rangers Academy `Emisor` records with real NIF/IBAN/Drive folder IDs, run on every deploy via the Procfile release phase
+
+**Bugs fixed this session:**
+
+| Bug | Root cause | Fix |
+|-----|-----------|-----|
+| `seed_emisores` wiped correct Drive folder IDs on every deploy | `update_or_create(defaults={"drive_folder_id": ""})` overwrote the real ID with an empty string each run, forcing fallback to a deleted env var → every invoice upload 404'd | Switched to `get_or_create` + conditional update that never overwrites an already-set `drive_folder_id` |
+| Invoice generation failures were silently swallowed | No surface for errors (Drive folder deleted, quota exceeded, etc.) | Failures now written into `pago.notas` so they're visible in the Pagos list UI, plus logged to stdout |
+| Legacy documents pointing at deleted/missing Drive files | Pre-migration `Documento` records had `s3_key` set but the actual Drive file was gone | `fix_legacy_docs` management command re-generates PDFs from the linked `Pago`, re-uploads to Drive, and repairs `s3_key`; falls back to the Cami&Co emisor for pre-migration records with `pago.emisor = NULL`; accepts `--check-s3` to audit all keys against Drive |
+| Missing invoices for older pagos | Some existing payments never had a `Documento` generated | New `fix_missing_invoices` management command (runs in release phase) auto-generates invoices for any pago with no linked documento |
+| **All 11 modal overlays across the app rendered off-position** (Alumnos, Grupos, Pagadores, Pagos, CRM, Empresas, Documentos) | The `fadeUp` CSS animation ended on `transform: translateY(0)` instead of `transform: none` — a zero-translate still creates a new stacking context, which breaks `position: fixed` centering | Changed animation end-state to `transform: none` in `index.css` — fixed every modal in the app with a one-line change |
+| "Descargar" on documents silently downloaded instead of opening the PDF; broken in production | `<a>` had `download` attribute and used a hardcoded `/api/v1` path (only worked on localhost) | Removed `download`, added `target="_blank"`, switched to `VITE_API_URL` so it resolves correctly on Vercel → Railway |
+
+**Also shipped:**
+- `AlumnoSerializer` gained `grupos_detalle` (wraps the single grupo FK in the array shape the frontend already expected) and an `fnac` alias for `fecha_nacimiento`; `asignar-grupo` action and a search filter added to `AlumnoViewSet`
+- Document rows in `DocumentosPage` now show their creation datetime
+- `ripple.py` health-checker updated to match renamed functions from this session's refactor
+
+---
+
+## July 1, 2026 — Rangers Academy Invoice Branding + Deploy Hardening
+
+| Date | Repo | Commit |
+|------|------|--------|
+| 2026-07-01 | academia-api | **Add Rangers Academy PDF theme + ensure_superuser command** |
+| 2026-07-01 | academia-api | **Show autonoma name + email in DE block; add Emisor.email field** |
+
+**Rangers Academy invoice theme:**
+- `invoice_service.py` gained a theme system (`THEME_CAMIANDCO` / `THEME_RANGERS`) — Rangers uses a forest green (`#314922`) accent, cream (`#F5EDD6`) background, and a square badge logo, plus its own inspirational quote; Cami&Co's theme is unchanged
+- Rangers logo asset added, resized to 400×400 for PDF embedding
+
+**Invoice content fixes:**
+- `Emisor` gained an `email` field; `seed_emisores` updated with Rangers' real address (Rúa dos Ferreiros 26), phone, and `info@rangersacademy.es`
+- Invoice "emisor" block now shows the autónoma's own name and email alongside the company info, and the label changed from **CIF to NIF** (autónomos use NIF, not CIF — the previous label was incorrect)
+
+**Deploy hardening:**
+- New `ensure_superuser` management command — idempotent superuser creation from env vars, added to the Procfile release phase ahead of `seed_emisores`
+
+---
+
+## July 2, 2026 — Alumnos Google Sheets Import Tool
+
+### Milestone: Bulk Student Import via Google Sheets + Railway Release-Phase Bug Discovered
+
+| Date | Repo | Commit |
+|------|------|--------|
+| 2026-07-02 | academia-api | **Add Google Sheets bulk import tool for alumnos** |
+| 2026-07-02 | academia-api | **Add dni field to Alumno, add --row flag to import script** |
+| 2026-07-02 | academia-api | **Fix Procfile: Railway doesn't run the Heroku-style release phase** |
+| 2026-07-02 | academia-frontend | **CRM: only require nombre padre/madre and nombre alumno in nueva consulta** |
+
+**Google Sheets import tool built:**
+- `create_import_template.py` builds (or repairs in place) a Google Sheet template with ALUMNO / PAGADOR / GRUPO column groups, dropdown validation, and TEXT-formatted date/phone/IBAN columns
+- `import_from_sheets.py` reads the sheet and creates alumnos via the platform API, matching or creating pagador/grupo records by name, and skipping alumnos that already exist; `--row` added to import a single row for testing without touching other in-progress rows
+- `Alumno.telefono`, `.email`, and `.aviso_cumple_dias` restored (they had been removed in a prior migration in favor of Pagador-only contact info) — this also fixed `AlumnosPage.tsx`, which already had dead form inputs for these fields that the old serializer had been silently dropping
+- `Alumno.dni` added after the sheet template gained a `dni_alumno` column during real data entry, wired through the import script and template
+
+**Critical infrastructure bug found and fixed:**
+- The Procfile's `release:` line had **never executed** — Railway's Nixpacks builder only runs the `web:` process from a Procfile, unlike Heroku, so every migration and management command listed under `release:` (including `ensure_superuser`, `seed_emisores`, `fix_legacy_docs`) had silently never run on any deploy
+- Discovered because the new `alumnos.dni`/`telefono`/`email` migrations never applied in production despite the deploy reporting success — causing 500 errors on `/pagadores/`. `documentos.0004_emisor_email` was found stuck unapplied for the same reason
+- Both migrations applied manually; going forward, release-phase commands are folded directly into the `web:` start command so they always run
+
+**Frontend:** CRM's "nueva consulta" form loosened — only nombre padre/madre and nombre alumno remain required; teléfono, objetivo, origen, edad, curso, and email are now optional. Teléfono still validates as a Spanish mobile number (9 digits, starting 6/7/9) when filled in.
+
+---
+
+## July 3, 2026 — CRM Adult/Self-Pay Support, Matriculation Flow, Contactos Sheet Export
+
+### Milestone: Adult Students Can Self-Enroll and Self-Pay End-to-End
+
+**Context:** Rangers Academia serves both children (parent is the contact/payer) and adult students (who are their own contact and payer). The CRM previously assumed every lead had a separate parent/guardian contact — this session made "adult, self-paying" a first-class path from lead capture through enrollment.
+
+| Date | Repo | Commit |
+|------|------|--------|
+| 2026-07-03 | academia-api | **Add double-click launcher for the alumnos import script** |
+| 2026-07-03 | academia-api | **Auto-export new CRM leads to the Contactos Google Sheet tab** |
+| 2026-07-03 | academia-api | **Hardcode project path in importar_alumnos.bat** |
+| 2026-07-03 | academia-api | **Add es_adulto/pagador_es_alumno to Lead, autofill pagador on enrollment** |
+| 2026-07-03 | academia-api | **CRM: guard convertir-alumno against double matriculation, return names** |
+| 2026-07-03 | academia-api | **CRM: make nombre_contacto optional when es_adulto is true** |
+| 2026-07-03 | academia-frontend | **Update CRM origen/objetivo options to match new taxonomy** |
+| 2026-07-03 | academia-frontend | **CRM: add adult/self-pay checkbox and payer dropdown to nueva consulta form** |
+| 2026-07-03 | academia-frontend | **CRM: add Matricular button to convert a lead into an Alumno/Pagador** |
+| 2026-07-03 | academia-frontend | **CRM: make Nombre padre/madre optional when adulto is checked** |
+
+**Contactos Google Sheet export (new):**
+- `Lead.origen`/`objetivo` choices simplified to a fixed taxonomy (`telefono`/`whatsapp`/`instagram`/`facebook`/`recomendacion`/`web` and `general`/`cambridge`/`ib`/`adultos`) to match the sheet's dropdown validation; existing leads keep their old raw values
+- `add_contactos_sheet.py` creates/repairs a "Contactos" tab in the shared Google Sheet with columns: fecha, nombre_padre_madre, nombre_alumno, telefono, email, edad_alumno, curso_escolar, objetivo, origen, etapa_crm, notas, **es_adulto**
+- `LeadViewSet.perform_create` now appends a row to that sheet on every new lead via `modules/crm/sheets_service.py`; failures are logged but never block lead creation
+- Frontend origen/objetivo `<select>` options updated to match the new backend taxonomy exactly
+
+**Adult / self-pay feature (`es_adulto`, `pagador_es_alumno`):**
+- Two new boolean fields on `Lead`: `es_adulto` ("the student is an adult") and `pagador_es_alumno` ("the student pays for themselves")
+- "Nueva consulta" form gained a checkbox — "El alumno es adulto / paga el mismo" — that reveals a dropdown ("El mismo alumno es el pagador" / "Otro pagador") when checked
+- `nombre_contacto` (nombre padre/madre) is now **optional** whenever `es_adulto` is true — relabeled to "Nombre contacto (opcional)" on the frontend, and validated conditionally in `LeadSerializer.validate()` on the backend (model-level `blank=True` can't express a conditional-required rule on its own)
+- When such a lead is enrolled, `convertir_alumno` now creates the `Pagador` using the **alumno's own name** (instead of the contact's) whenever `es_adulto and pagador_es_alumno` are both true
+
+**Matriculation flow built (previously missing entirely):**
+- Before this session, moving a CRM lead to the "Matriculado" stage only changed its pipeline label — no `Alumno`/`Pagador` was ever actually created. A real **"Matricular"** button now appears on lead cards and the detail panel once a lead reaches that stage
+- Clicking it opens a form to pick grupo (auto-filling the monthly fee from the group's `tarifa`), mensualidad, and fecha de inicio, then calls `convertir-alumno`
+- `convertir_alumno` gained a guard against double-matriculation (returns an error if the lead already has a linked alumno, preventing duplicate `Alumno` records) and now returns `alumno_nombre`/`pagador_nombre`/`pagador_autocompletado` so the frontend can show a confirmation without extra requests
+- Confirmation modal shows the created alumno + pagador names, a note ("Pagador creado automáticamente con los datos del alumno") when the payer was auto-filled, and a **"Ver perfil del alumno"** link
+- Since `AlumnosPage` has no per-student detail route, that link navigates to `/alumnos?openId=<id>`; `AlumnosPage` now reads that query param and auto-opens the matching alumno's edit modal on load
+
+**Also shipped:**
+- Double-click launcher (`.bat`) for the alumnos Sheets import script, with its project path hardcoded after a copy on the Desktop broke the original `%~dp0`-relative version
 
 ---
