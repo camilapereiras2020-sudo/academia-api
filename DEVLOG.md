@@ -25,6 +25,7 @@ Commits from both repositories are merged chronologically and grouped by session
 | 2026-07-01 | Rangers Academy PDF theme; autónoma name/email on invoices; ensure_superuser deploy command |
 | 2026-07-02 | Google Sheets bulk import tool for alumnos; dni field added; Railway release-phase Procfile bug fixed |
 | 2026-07-03 | CRM adult/self-pay support (`es_adulto`) end-to-end: form fields, Contactos sheet export, auto-fill pagador, Matricular button, conditional validation |
+| 2026-07-03 | GruposPage search box; PagosPage manual invoice/receipt generation button |
 
 ---
 
@@ -340,6 +341,8 @@ AFTER:   Save Pago → instant
 | 2026-07-03 | academia-frontend | **CRM: add adult/self-pay checkbox and payer dropdown to nueva consulta form** |
 | 2026-07-03 | academia-frontend | **CRM: add Matricular button to convert a lead into an Alumno/Pagador** |
 | 2026-07-03 | academia-frontend | **CRM: make Nombre padre/madre optional when adulto is checked** |
+| 2026-07-03 | academia-frontend | **GruposPage: add search by nombre or nivel** |
+| 2026-07-03 | academia-frontend | **PagosPage: add manual generate invoice/receipt button for pagos without a doc** |
 
 **Contactos Google Sheet export (new):**
 - `Lead.origen`/`objetivo` choices simplified to a fixed taxonomy (`telefono`/`whatsapp`/`instagram`/`facebook`/`recomendacion`/`web` and `general`/`cambridge`/`ib`/`adultos`) to match the sheet's dropdown validation; existing leads keep their old raw values
@@ -362,5 +365,7 @@ AFTER:   Save Pago → instant
 
 **Also shipped:**
 - Double-click launcher (`.bat`) for the alumnos Sheets import script, with its project path hardcoded after a copy on the Desktop broke the original `%~dp0`-relative version
+- `GruposPage` gained a search box filtering by nombre or nivel, matching the search pattern already used on Alumnos/CRM
+- `PagosPage`: any pago missing `num_doc` now shows a 🧾 button that calls `documentosApi.generar` (tipo inferred from `metodo` — transferencia/tarjeta → factura, otherwise recibo), giving a manual fallback for payments that never got an invoice/receipt generated
 
 ---
