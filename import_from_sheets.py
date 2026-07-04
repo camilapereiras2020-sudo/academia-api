@@ -5,8 +5,12 @@ created by create_import_template.py, via the platform API.
 For each data row:
   - matches/creates the pagador by nombre_pagador
   - matches/creates the grupo by nombre_grupo
-  - creates the alumno linked to both, unless an alumno with the same
-    nombre_alumno already exists (skipped, no duplicates)
+  - if an alumno with the same nombre_alumno (nombre + apellido) already
+    exists, it is UPDATED: telefono, email, nivel, pagador, and grupo are
+    patched to the sheet's values, but only the fields that actually
+    changed, and only when the sheet cell is non-empty (a blank cell
+    never clears existing data — it just means "no update for this field")
+  - otherwise the alumno is created as before
 
 Usage:
     venv/Scripts/python.exe import_from_sheets.py [--sheet-id ID] [--dry-run]
@@ -103,6 +107,11 @@ class ApiClient:
         r.raise_for_status()
         return r.json()
 
+    def patch(self, path, payload):
+        r = self.session.patch(self.base_url + path, json=payload)
+        r.raise_for_status()
+        return r.json()
+
 
 def login(base_url, email, password):
     r = requests.post(base_url + "auth/login/", json={"email": email, "password": password})
@@ -121,6 +130,10 @@ def read_sheet_rows(spreadsheet_id):
 
 def build_name_index(records):
     return {_norm(r["nombre"]): r["id"] for r in records}
+
+
+def build_full_index(records):
+    return {_norm(r["nombre"]): r for r in records}
 
 
 def main():
@@ -157,9 +170,9 @@ def main():
 
     pagadores_idx = build_name_index(api.get("pagadores/"))
     grupos_idx = build_name_index(api.get("grupos/"))
-    alumnos_idx = build_name_index(api.get("alumnos/"))
+    alumnos_full = build_full_index(api.get("alumnos/"))
 
-    created, skipped, errors = 0, 0, []
+    created, updated, unchanged, errors = 0, 0, 0, []
 
     for i, row in enumerate(rows, start=args.row or 3):  # 1-indexed sheet row number, data starts at row 3
         nombre_pila = _cell(row, COL_NOMBRE_ALUMNO)
@@ -169,9 +182,7 @@ def main():
         nombre_alumno = f"{nombre_pila} {apellido_alumno}".strip()
 
         try:
-            if _norm(nombre_alumno) in alumnos_idx:
-                skipped += 1
-                continue
+            existing = alumnos_full.get(_norm(nombre_alumno))
 
             pagador_id = None
             nombre_pagador = _cell(row, COL_NOMBRE_PAGADOR)
@@ -211,6 +222,33 @@ def main():
                         grupo_id = grupo["id"]
                     grupos_idx[key] = grupo_id
 
+            if existing is not None:
+                # Update path: only patch fields that are non-empty in the
+                # sheet AND differ from the alumno's current value. A blank
+                # sheet cell never clears existing data.
+                patch_fields = {}
+                telefono = _cell(row, COL_TEL_ALUMNO)
+                if telefono and telefono != (existing.get("telefono") or ""):
+                    patch_fields["telefono"] = telefono
+                email = _cell(row, COL_EMAIL_ALUMNO)
+                if email and email != (existing.get("email") or ""):
+                    patch_fields["email"] = email
+                nivel = _cell(row, COL_NIVEL)
+                if nivel and nivel != (existing.get("nivel") or ""):
+                    patch_fields["nivel"] = nivel
+                if pagador_id is not None and pagador_id != existing.get("pagador"):
+                    patch_fields["pagador"] = pagador_id
+                if grupo_id is not None and grupo_id != existing.get("grupo"):
+                    patch_fields["grupo"] = grupo_id
+
+                if patch_fields:
+                    if not args.dry_run:
+                        api.patch(f"alumnos/{existing['id']}/", patch_fields)
+                    updated += 1
+                else:
+                    unchanged += 1
+                continue
+
             aviso = _cell(row, COL_AVISO_CUMPLE)
             if not args.dry_run:
                 alumno = api.post("alumnos/", {
@@ -225,9 +263,9 @@ def main():
                     "pagador": pagador_id,
                     "grupo": grupo_id,
                 })
-                alumnos_idx[_norm(nombre_alumno)] = alumno["id"]
+                alumnos_full[_norm(nombre_alumno)] = alumno
             else:
-                alumnos_idx[_norm(nombre_alumno)] = -1
+                alumnos_full[_norm(nombre_alumno)] = {"id": -1}
             created += 1
 
         except requests.HTTPError as e:
@@ -235,7 +273,7 @@ def main():
         except Exception as e:
             errors.append(f"Fila {i} ({nombre_alumno}): {e}")
 
-    print(f"\n{created} creados, {skipped} omitidos (ya existían), {len(errors)} errores")
+    print(f"\n{created} creados, {updated} actualizados, {unchanged} sin cambios, {len(errors)} errores")
     for err in errors:
         print(f"  ✗ {err}")
 
