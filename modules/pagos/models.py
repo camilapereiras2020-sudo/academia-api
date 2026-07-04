@@ -9,7 +9,12 @@ class Pago(models.Model):
     academia = models.ForeignKey(User, on_delete=models.CASCADE, related_name="pagos")
     pagador = models.ForeignKey("pagadores.Pagador", on_delete=models.PROTECT, related_name="pagos")
     alumno = models.ForeignKey("alumnos.Alumno", on_delete=models.PROTECT, related_name="pagos")
-    grupo = models.ForeignKey("grupos.Grupo", on_delete=models.PROTECT, related_name="pagos")
+    grupo = models.ForeignKey(
+        "grupos.Grupo",
+        on_delete=models.PROTECT,
+        null=True, blank=True,
+        related_name="pagos",
+    )
     periodo = models.CharField(max_length=7)
     mensualidad = models.DecimalField(max_digits=8, decimal_places=2, default=0)
     descuento = models.DecimalField(max_digits=5, decimal_places=2, default=0)

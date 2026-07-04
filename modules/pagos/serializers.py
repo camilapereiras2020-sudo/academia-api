@@ -4,7 +4,7 @@ from .models import Pago
 class PagoSerializer(serializers.ModelSerializer):
     pagador_nombre = serializers.CharField(source="pagador.nombre", read_only=True)
     alumno_nombre  = serializers.CharField(source="alumno.nombre",  read_only=True)
-    grupo_nombre   = serializers.CharField(source="grupo.nombre",   read_only=True)
+    grupo_nombre   = serializers.CharField(source="grupo.nombre",   read_only=True, default=None)
     emisor_nombre  = serializers.CharField(source="emisor.nombre",  read_only=True, default=None)
     tarifa_nombre  = serializers.CharField(source="tarifa.get_nombre_display", read_only=True, default=None)
 
