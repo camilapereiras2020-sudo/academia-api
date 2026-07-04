@@ -26,6 +26,10 @@ Commits from both repositories are merged chronologically and grouped by session
 | 2026-07-02 | Google Sheets bulk import tool for alumnos; dni field added; Railway release-phase Procfile bug fixed |
 | 2026-07-03 | CRM adult/self-pay support (`es_adulto`) end-to-end: form fields, Contactos sheet export, auto-fill pagador, Matricular button, conditional validation |
 | 2026-07-03 | GruposPage search box; PagosPage manual invoice/receipt generation button |
+| 2026-07-03 | Class page core: `/grupos/:id` route with lesson log, homework tracker, struggle tracker |
+| 2026-07-04 | Tarifa pricing system (Rangers Academy rates + Cami&Co manual entry), wired into Nuevo Pago with a horas-worked field |
+| 2026-07-04 | marca (brand) field added to Alumno/Pago/Lead, with brand filter toggles on Alumnos and Pagos |
+| 2026-07-04 | Modal positioning re-fixed (portal-based) in Alumnos/Pagadores; Railway auto-deploy webhook trigger repaired |
 
 ---
 
@@ -367,5 +371,58 @@ AFTER:   Save Pago → instant
 - Double-click launcher (`.bat`) for the alumnos Sheets import script, with its project path hardcoded after a copy on the Desktop broke the original `%~dp0`-relative version
 - `GruposPage` gained a search box filtering by nombre or nivel, matching the search pattern already used on Alumnos/CRM
 - `PagosPage`: any pago missing `num_doc` now shows a 🧾 button that calls `documentosApi.generar` (tipo inferred from `metodo` — transferencia/tarjeta → factura, otherwise recibo), giving a manual fallback for payments that never got an invoice/receipt generated
+
+---
+
+## July 3–4, 2026 — Class Pages, Pricing/Tariff System, Brand Field, Deploy Pipeline Fix
+
+### Milestone: Class Hub, Real Pricing Rates, Multi-Brand Data Model
+
+**Context:** ROADMAP.md was added to track four longer-horizon feature ideas (smart calendar, class hub, WhatsApp/email homework delivery, auto parent messaging). This session built out the second item — a per-group class page — then moved on to giving payments a real pricing model instead of free-typed amounts, and finally tagging students/payments/leads by which of the two brands (Cami&Co vs Rangers Academy) they belong to.
+
+| Date | Repo | Commit |
+|------|------|--------|
+| 2026-07-03 | academia-api | **Add ROADMAP.md with four feature ideas: smart calendar, class hub, WhatsApp/email homework delivery, auto parent messaging** |
+| 2026-07-03 | academia-api | **Add class page core: lesson log content, homework tracker, struggle tracker** |
+| 2026-07-03 | academia-api | **Fix Tarea creation: wrap completados bulk-create in a transaction** |
+| 2026-07-03 | academia-frontend | **Add class page: new /grupos/:id route with lesson log, homework, struggle tracker** |
+| 2026-07-03 | academia-frontend | **GrupoDetailPage: require fecha_asignada before saving a tarea** |
+| 2026-07-04 | academia-api | **ROADMAP: note materials-upload implementation details, still deferred** |
+| 2026-07-04 | academia-frontend | **Fix modal positioning in AlumnosPage and PagadoresPage via portal** |
+| 2026-07-04 | academia-api | **Add Tarifa pricing model and link it to Pago** |
+| 2026-07-04 | academia-frontend | **Add tarifa selector to Nuevo Pago, auto-filling the amount** |
+| 2026-07-04 | academia-api | **Make Pago.grupo optional** |
+| 2026-07-04 | academia-frontend | **Make grupo optional and decouple tarifa from grupo in Nuevo Pago** |
+| 2026-07-04 | academia-frontend | **Add horas field and harden the tarifa dropdown in Nuevo Pago** |
+| 2026-07-04 | academia-api | **import_from_sheets.py: update existing alumnos instead of skipping** |
+| 2026-07-04 | academia-api | **Add marca (brand) field to Alumno, Pago, and Lead** |
+| 2026-07-04 | academia-frontend | **Add brand (marca) filter toggle to AlumnosPage and PagosPage** |
+
+**Class pages (`/grupos/:id`):**
+- First per-record route in the app — every other page is list+modal. New `modules.clases` app adds `Tarea`/`TareaCompletada` (homework, mirroring `Sesion`/`RegistroAsistencia`) and `NotaDificultad` (per-student struggle/topic notes, mirroring `crm.Interaccion`)
+- `Sesion` gained a `contenido` field (lesson-log content), separate from the existing `notas`
+- Frontend `GrupoDetailPage` presents lesson log, homework tracker, and struggle tracker for a single group; a bug where `Tarea` could be saved without `fecha_asignada` was fixed, and the backend's `completados` bulk-create was wrapped in a transaction so a partial failure can't leave a `Tarea` half-populated
+
+**Tarifa pricing system (new `modules.tarifas` app):**
+- `Tarifa` model: `nombre` (Clase Grupo / Bono Familia / Clase Privada / Clase Recuperada), `tipo_cobro` (por_hora / mensual / bono_familiar), `marca`, `precio`, optional `horas_semanales` (1–3)
+- Seeded with Rangers Academy's real rate card (Clase Grupo: €12/h or €48–135/mes for 1–3h/semana; Bono Familia: €90–260/mes for 1–3h/semana) plus Clase Privada/Recuperada and all of Cami&Co's categories as manual-entry placeholders (no fixed price)
+- `Pago` gained an optional `tarifa` FK. Nuevo Pago's tarifa dropdown (grouped by brand) auto-fills and **locks** the amount for Rangers' fixed-price combos, and leaves it freely editable for Cami&Co and for Clase Privada/Recuperada
+- `grupo` on `Pago` was made optional and fully decoupled from pricing — selecting a grupo no longer overwrites the amount; only the tarifa selector does, so a payment's tariff no longer has to match whichever group the student happens to be in
+- New optional **Horas** field (decimal, e.g. `1.5`) on Nuevo Pago, mapped to the pre-existing `Pago.horas_trabajadas` field that had never been exposed in this form
+- Verified live with a real browser (Playwright) rather than by inspection alone: confirmed all seeded tarifa options render, group correctly by brand, and that selecting a fixed-price tarifa locks the amount while Clase Privada/manual ones don't; hardened the dropdown to skip rendering a brand's optgroup with zero options and to show a loading placeholder while the tarifas request is in flight
+
+**marca (brand) field:**
+- `Alumno`, `Pago`, and `Lead` each gained a `marca` field (`cami_and_co` / `rangers_academy`, default `rangers_academy`), reusing the choices already defined on `Tarifa`
+- `AlumnoViewSet` and `PagoViewSet` accept a `?marca=` filter; `AlumnosPage` and `PagosPage` got a Rangers Academy / Cami & Co / Todas toggle wired to it
+
+**Bugs fixed this session:**
+
+| Bug | Root cause | Fix |
+|-----|-----------|-----|
+| Modal positioning regressed again in AlumnosPage/PagadoresPage — dialogs rendered far down the page instead of centered | The June 30 `fadeUp`-animation fix addressed one cause, but these two pages' modals were still nested under `AppShell`'s animated wrapper, which could re-establish itself as the containing block for `position: fixed` | Rendered both pages' modals through a React portal to `document.body`, which is immune to any ancestor's transform/animation state, not just the one already fixed |
+| GitHub pushes to `academia-api` stopped auto-deploying on Railway sometime after 2026-07-03 — two real feature pushes today landed with no new deployment | Railway's `DeploymentTrigger` record for the `academia-api` service had been deleted entirely (confirmed via the Railway GraphQL API: `repoTriggers` returned an empty list, while `academia-frontend`'s equivalent trigger was intact) | Recreated the trigger via `deploymentTriggerCreate` (branch `main`, provider `github`, same repository/environment/service as before); verified fixed by watching a real push immediately start a new Railway deployment |
+
+**Also shipped:**
+- `import_from_sheets.py` no longer skips alumnos that already exist in the sheet — it now patches `telefono`, `email`, `nivel`, `pagador`, and `grupo` when the sheet's value differs from the current one, matching by nombre+apellido. A blank sheet cell is never treated as "clear this field."
 
 ---
