@@ -7,11 +7,12 @@ class PagoSerializer(serializers.ModelSerializer):
     grupo_nombre   = serializers.CharField(source="grupo.nombre",   read_only=True, default=None)
     emisor_nombre  = serializers.CharField(source="emisor.nombre",  read_only=True, default=None)
     tarifa_nombre  = serializers.CharField(source="tarifa.get_nombre_display", read_only=True, default=None)
+    marca_display  = serializers.CharField(source="get_marca_display", read_only=True)
 
     class Meta:
         model  = Pago
         fields = [
-            "id", "pagador", "pagador_nombre", "alumno", "alumno_nombre",
+            "id", "marca", "marca_display", "pagador", "pagador_nombre", "alumno", "alumno_nombre",
             "grupo", "grupo_nombre", "emisor", "emisor_nombre",
             "tarifa", "tarifa_nombre",
             "periodo", "mensualidad", "descuento", "extras", "total",

@@ -18,7 +18,10 @@ class AlumnoViewSet(ModelViewSet):
         empresa   = self.request.query_params.get("empresa")
         es_fundae = self.request.query_params.get("es_fundae")
         tipo      = self.request.query_params.get("tipo")  # "empresa", "particular", "fundae"
+        marca     = self.request.query_params.get("marca")
 
+        if marca:
+            qs = qs.filter(marca=marca)
         if search:
             from django.db.models import Q
             qs = qs.filter(

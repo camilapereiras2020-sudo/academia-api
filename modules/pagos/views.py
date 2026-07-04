@@ -91,10 +91,12 @@ class PagoViewSet(ModelViewSet):
         periodo = self.request.query_params.get("periodo")
         alumno  = self.request.query_params.get("alumno")
         pagador = self.request.query_params.get("pagador")
+        marca   = self.request.query_params.get("marca")
         if estado:  qs = qs.filter(estado=estado)
         if periodo: qs = qs.filter(periodo=periodo)
         if alumno:  qs = qs.filter(alumno_id=alumno)
         if pagador: qs = qs.filter(pagador_id=pagador)
+        if marca:   qs = qs.filter(marca=marca)
         return qs
 
     def perform_create(self, serializer):

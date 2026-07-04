@@ -15,12 +15,13 @@ class LeadSerializer(serializers.ModelSerializer):
     etapa_display = serializers.CharField(source="get_etapa_display", read_only=True)
     origen_display = serializers.CharField(source="get_origen_display", read_only=True)
     objetivo_display = serializers.CharField(source="get_objetivo_display", read_only=True)
+    marca_display = serializers.CharField(source="get_marca_display", read_only=True)
     alerta = serializers.SerializerMethodField()
 
     class Meta:
         model = Lead
         fields = [
-            "id", "nombre_contacto", "nombre_alumno", "edad_alumno",
+            "id", "marca", "marca_display", "nombre_contacto", "nombre_alumno", "edad_alumno",
             "curso_escolar", "telefono", "email", "objetivo", "objetivo_display",
             "es_adulto", "pagador_es_alumno",
             "nivel_estimado", "disponibilidad", "colegio", "necesidades_especiales",
@@ -51,12 +52,13 @@ class LeadSerializer(serializers.ModelSerializer):
 class LeadListSerializer(serializers.ModelSerializer):
     etapa_display = serializers.CharField(source="get_etapa_display", read_only=True)
     origen_display = serializers.CharField(source="get_origen_display", read_only=True)
+    marca_display = serializers.CharField(source="get_marca_display", read_only=True)
     alerta = serializers.SerializerMethodField()
 
     class Meta:
         model = Lead
         fields = [
-            "id", "nombre_contacto", "nombre_alumno", "edad_alumno",
+            "id", "marca", "marca_display", "nombre_contacto", "nombre_alumno", "edad_alumno",
             "telefono", "objetivo", "es_adulto", "alumno", "etapa", "etapa_display",
             "origen_display", "alerta", "proximo_seguimiento",
             "created_at", "updated_at",

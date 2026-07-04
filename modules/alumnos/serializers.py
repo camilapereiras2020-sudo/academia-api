@@ -11,6 +11,7 @@ class AlumnoSerializer(serializers.ModelSerializer):
     fnac = serializers.DateField(source="fecha_nacimiento", required=False, allow_null=True)
     # grupos_detalle wraps the single grupo FK in the array shape the frontend expects
     grupos_detalle = serializers.SerializerMethodField()
+    marca_display = serializers.CharField(source="get_marca_display", read_only=True)
 
     def get_grupos_detalle(self, obj):
         if not obj.grupo_id:
@@ -24,7 +25,7 @@ class AlumnoSerializer(serializers.ModelSerializer):
     class Meta:
         model = Alumno
         fields = [
-            "id", "nombre", "fecha_nacimiento", "fnac", "telefono", "email", "dni",
+            "id", "nombre", "marca", "marca_display", "fecha_nacimiento", "fnac", "telefono", "email", "dni",
             "aviso_cumple_dias", "grupo", "grupo_nombre",
             "grupos_detalle", "pagador", "pagador_nombre", "empresa", "empresa_nombre",
             "es_fundae", "nivel", "notas", "activo", "created_at",

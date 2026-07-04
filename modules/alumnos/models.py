@@ -1,11 +1,13 @@
 from django.db import models
 from django.contrib.auth import get_user_model
+from modules.tarifas.models import MARCA_CHOICES
 User = get_user_model()
 
 
 class Alumno(models.Model):
     academia = models.ForeignKey(User, on_delete=models.CASCADE, related_name="alumnos")
     nombre = models.CharField(max_length=200)
+    marca = models.CharField(max_length=20, choices=MARCA_CHOICES, default="rangers_academy")
     fecha_nacimiento = models.DateField(null=True, blank=True)
     telefono = models.CharField(max_length=20, blank=True)
     email = models.EmailField(blank=True)

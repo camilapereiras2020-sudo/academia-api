@@ -1,5 +1,6 @@
 from django.db import models
 from django.contrib.auth import get_user_model
+from modules.tarifas.models import MARCA_CHOICES
 
 User = get_user_model()
 
@@ -41,6 +42,7 @@ TIPO_INTERACCION_CHOICES = [
 
 class Lead(models.Model):
     academia = models.ForeignKey(User, on_delete=models.CASCADE, related_name="leads")
+    marca = models.CharField(max_length=20, choices=MARCA_CHOICES, default="rangers_academy")
 
     # Datos obligatorios
     # nombre_contacto es obligatorio salvo que es_adulto=True (validado en el serializer,

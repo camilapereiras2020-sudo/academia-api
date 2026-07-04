@@ -1,5 +1,6 @@
 from django.db import models
 from django.contrib.auth import get_user_model
+from modules.tarifas.models import MARCA_CHOICES
 
 User = get_user_model()
 
@@ -7,6 +8,7 @@ ESTADO_CHOICES = [("pagado", "Pagado"), ("pendiente", "Pendiente"), ("parcial", 
 
 class Pago(models.Model):
     academia = models.ForeignKey(User, on_delete=models.CASCADE, related_name="pagos")
+    marca = models.CharField(max_length=20, choices=MARCA_CHOICES, default="rangers_academy")
     pagador = models.ForeignKey("pagadores.Pagador", on_delete=models.PROTECT, related_name="pagos")
     alumno = models.ForeignKey("alumnos.Alumno", on_delete=models.PROTECT, related_name="pagos")
     grupo = models.ForeignKey(
