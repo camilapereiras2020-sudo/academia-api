@@ -30,6 +30,12 @@ class Pago(models.Model):
         null=True, blank=True,
         related_name="pagos",
     )
+    tarifa = models.ForeignKey(
+        "tarifas.Tarifa",
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="pagos",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
