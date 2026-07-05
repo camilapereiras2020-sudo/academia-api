@@ -158,6 +158,7 @@ class PagoViewSet(ModelViewSet):
         from modules.alumnos.models import Alumno
         from modules.pagadores.models import Pagador
         from modules.grupos.models import Grupo
+        from .models import ConceptoAlias
         from .matching import best_match
 
         drafts = Pago.objects.filter(
@@ -170,10 +171,14 @@ class PagoViewSet(ModelViewSet):
         pagador_candidates = list(Pagador.objects.filter(academia=request.user).values_list("id", "nombre"))
         grupo_nombres = dict(Grupo.objects.filter(academia=request.user).values_list("id", "nombre"))
 
+        alias_qs = ConceptoAlias.objects.filter(academia=request.user)
+        aliases_alumno  = {a.alias_text: a.alumno_id  for a in alias_qs if a.alumno_id}
+        aliases_pagador = {a.alias_text: a.pagador_id for a in alias_qs if a.pagador_id}
+
         rows = []
         for pago in drafts:
-            sug_alumno  = best_match(pago.concepto_original, alumno_candidates)
-            sug_pagador = best_match(pago.concepto_original, pagador_candidates)
+            sug_alumno  = best_match(pago.concepto_original, alumno_candidates, aliases=aliases_alumno)
+            sug_pagador = best_match(pago.concepto_original, pagador_candidates, aliases=aliases_pagador)
             sug_grupo   = None
             if sug_alumno:
                 gid = grupo_by_alumno.get(sug_alumno["id"])

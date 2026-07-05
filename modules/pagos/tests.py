@@ -87,6 +87,48 @@ class MatchingTests(TestCase):
         self.assertNotIn("26", tokens)
         self.assertIn("alma", tokens)
 
+    def test_shared_surname_among_relatives_never_matches_without_given_name(self):
+        # Real production scenario: four people share "Troncoso Gonzalo"
+        # (two siblings, their aunt, their father). Concepto text with only
+        # the surname must not pick any of them.
+        relatives = [
+            (1, "Álvaro Troncoso Gonzalo"),
+            (2, "Victoria Troncoso Gonzalo"),
+            (3, "Susana Troncoso Gonzalo"),
+            (4, "Carlos Troncoso Gonzalo"),
+        ]
+        self.assertIsNone(best_match("Pago de Troncoso Gonzalo", relatives))
+
+    def test_tie_between_equally_scored_candidates_returns_none(self):
+        # Two different people both named "Juan", concepto only says "Juan"
+        # — equally strong (or weak) evidence for both, must not guess.
+        candidates = [(1, "Juan Perez"), (2, "Juan Garcia")]
+        self.assertIsNone(best_match("Juan", candidates))
+
+    def test_given_name_present_still_disambiguates_by_overlap_ratio(self):
+        # Not a tie: "Juan Lopez" (2 tokens) scores higher than "Juan
+        # Blazquez Sobral" (3 tokens) for the same single-token overlap.
+        candidates = [(1, "Juan Lopez"), (2, "Juan Blazquez Sobral")]
+        result = best_match("Juan", candidates)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["id"], 1)
+
+    def test_alias_matches_before_token_logic(self):
+        candidates = [(1, "Alba Ramírez Martín")]  # no given-name evidence for "Arturo" at all
+        result = best_match("Ramirez Gonzalez Arturo", candidates, aliases={"Arturo": 1})
+        self.assertEqual(result, {"id": 1, "nombre": "Alba Ramírez Martín", "score": 1.0})
+
+    def test_alias_ignored_if_target_id_not_in_candidates(self):
+        candidates = [(1, "Alba Ramírez Martín")]
+        result = best_match("Ramirez Gonzalez Arturo", candidates, aliases={"Arturo": 999})
+        self.assertIsNone(result)
+
+    def test_nickname_alias_resolves_where_token_matching_would_not(self):
+        candidates = [(25, "Tere")]
+        result = best_match("Ingreso Bizum - English Classes Tete", candidates, aliases={"Tete": 25})
+        self.assertEqual(result["id"], 25)
+        self.assertEqual(result["score"], 1.0)
+
     def test_all_real_csv_conceptos_do_not_crash(self):
         for concepto in REAL_CONCEPTOS:
             best_match(concepto, CANDIDATE_ALUMNOS)  # just must not raise
@@ -135,6 +177,28 @@ class DraftCompletionFlowTests(TestCase):
         self.assertEqual(row["sugerencia_pagador"]["id"], self.pagador.id)
         # alumno has a grupo -> should be suggested too
         self.assertEqual(row["sugerencia_grupo"]["id"], self.grupo.id)
+
+    def test_suggestions_endpoint_uses_concepto_alias(self):
+        from modules.pagos.models import ConceptoAlias
+
+        tere = Alumno.objects.create(academia=self.user, nombre="Tere")
+        nickname_draft = Pago.objects.create(
+            academia=self.user, emisor=self.emisor, marca="cami_and_co",
+            alumno=None, pagador=None, grupo=None,
+            periodo="2026-04", fecha="2026-04-14",
+            mensualidad=0, descuento=0, extras=[], total=25,
+            metodo="transferencia", estado="pagado",
+            concepto_original="Ingreso Bizum - English Classes Tete",
+            numero_factura_reservado="CC257-26",
+            estado_carga="pendiente_completar",
+        )
+        ConceptoAlias.objects.create(academia=self.user, alias_text="Tete", alumno=tere)
+
+        resp = self.client.get("/api/v1/pagos/sugerencias/")
+        self.assertEqual(resp.status_code, 200)
+        row = next(r for r in resp.json() if r["pago"]["id"] == nickname_draft.id)
+        self.assertEqual(row["sugerencia_alumno"]["id"], tere.id)
+        self.assertEqual(row["sugerencia_alumno"]["score"], 1.0)
 
     @patch("modules.pagos.views._send_payment_email")
     @patch("modules.documentos.invoice_service.generate_invoice_for_pago")
