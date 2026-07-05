@@ -108,7 +108,7 @@ class Command(BaseCommand):
                     academia_tel    = emisor.telefono  or "",
                     academia_cif    = emisor.nif       or "",
                     iban            = emisor.iban      or "",
-                    pagador_nombre  = pagador.nombre,
+                    pagador_nombre  = pagador.nombre if pagador else "",
                     pagador_nif     = getattr(pagador, "nif",      "") or "",
                     pagador_tel     = getattr(pagador, "telefono", "") or "",
                     pagador_email   = getattr(pagador, "email",    "") or "",

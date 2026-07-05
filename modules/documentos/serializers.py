@@ -24,8 +24,8 @@ class DocumentoSerializer(serializers.ModelSerializer):
     def get_pago_info(self, obj):
         if obj.pago:
             return {
-                "alumno": obj.pago.alumno.nombre,
-                "pagador": obj.pago.pagador.nombre,
+                "alumno": obj.pago.alumno.nombre if obj.pago.alumno else None,
+                "pagador": obj.pago.pagador.nombre if obj.pago.pagador else None,
                 "periodo": obj.pago.periodo,
                 "total": str(obj.pago.total),
             }

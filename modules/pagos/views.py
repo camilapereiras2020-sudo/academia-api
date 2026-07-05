@@ -12,6 +12,9 @@ def _send_payment_email(pago, num_doc, emisor_nombre="Cami&Co"):
     from django.conf import settings
     import resend
 
+    if not pago.alumno or not pago.pagador:
+        return  # incomplete pago — nothing to email yet
+
     email   = getattr(pago.pagador, "email", "") or ""
     api_key = getattr(settings, "RESEND_API_KEY", "") or ""
     if not email or not api_key or api_key == "re_placeholder":

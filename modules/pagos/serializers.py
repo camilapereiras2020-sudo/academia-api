@@ -24,3 +24,15 @@ class PagoSerializer(serializers.ModelSerializer):
             "id", "created_at", "num_doc", "serie_id", "emisor", "emisor_nombre", "tarifa_nombre",
             "estado_carga", "numero_factura_reservado",
         ]
+
+    def validate(self, attrs):
+        instance = self.instance
+        if instance and instance.pk:
+            alumno_after  = attrs.get("alumno", instance.alumno)
+            pagador_after = attrs.get("pagador", instance.pagador)
+            if (alumno_after is None or pagador_after is None) and \
+                    instance.documentos.exclude(estado="borrador").exists():
+                raise serializers.ValidationError(
+                    "No se puede quitar alumno/pagador de un pago con documentos ya emitidos."
+                )
+        return attrs
