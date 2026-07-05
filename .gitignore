@@ -7,4 +7,7 @@ staticfiles/
 google-credentials.json
 .google-token.json
 oauth-credentials.json
+client_secret*.json
+*credentials*.json
+*token*.json
 
