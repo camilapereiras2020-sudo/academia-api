@@ -135,11 +135,13 @@ def _trimester(month):
 
 
 def upload_to_drive(pdf_bytes: bytes, filename: str, year: int, month: int,
-                    folder_id: str = None) -> str:
+                    folder_id: str = None, subfolder: str = None) -> str:
     """Upload PDF bytes to Drive. Returns the Drive file id.
 
     folder_id: root Drive folder for this emisor. Falls back to
     GOOGLE_DRIVE_FOLDER_ID env var if not provided.
+    subfolder: if given (e.g. "Anuladas"), replaces the T1/T2/T3 trimester
+    folder — used to segregate voided documents from the live ones.
     """
     root_id = folder_id or os.environ.get("GOOGLE_DRIVE_FOLDER_ID")
     if not root_id:
@@ -149,9 +151,9 @@ def upload_to_drive(pdf_bytes: bytes, filename: str, year: int, month: int,
         )
     service  = _drive()
     year_id  = _folder(service, f"Facturas {year}", root_id)
-    tri_id   = _folder(service, _trimester(month), year_id)
+    leaf_id  = _folder(service, subfolder or _trimester(month), year_id)
 
-    meta  = {"name": filename, "parents": [tri_id]}
+    meta  = {"name": filename, "parents": [leaf_id]}
     media = MediaIoBaseUpload(io.BytesIO(pdf_bytes), mimetype="application/pdf", resumable=False)
     file  = service.files().create(body=meta, media_body=media, fields="id").execute()
     return file["id"]
@@ -225,6 +227,17 @@ def _ps(name, **kw) -> ParagraphStyle:
 
 # ── PDF generation ────────────────────────────────────────────────────────────
 
+def _draw_watermark(canvas, doc_, text):
+    canvas.saveState()
+    canvas.setFont("Helvetica-Bold", 90)
+    canvas.setFillColor(colors.red)
+    canvas.setFillAlpha(0.18)
+    canvas.translate(A4[0] / 2, A4[1] / 2)
+    canvas.rotate(45)
+    canvas.drawCentredString(0, 0, text)
+    canvas.restoreState()
+
+
 def generate_pdf_bytes(
     academia_nombre, academia_autonoma, academia_dir, academia_ciudad,
     academia_tel, academia_email, academia_cif, iban,
@@ -233,6 +246,7 @@ def generate_pdf_bytes(
     periodo, mensualidad, descuento, extras, total,
     metodo, concepto_libre, num_doc, fecha, tipo,
     theme: dict = None,
+    watermark: str = None,
 ) -> bytes:
 
     t          = theme or THEME_CAMIANDCO
@@ -472,7 +486,11 @@ def generate_pdf_bytes(
         _ps("ex", fontSize=8, textColor=LGRAY, alignment=TA_CENTER, fontName="Helvetica-Oblique"),
     ))
 
-    doc.build(story)
+    if watermark:
+        stamp = lambda c, d: _draw_watermark(c, d, watermark)
+        doc.build(story, onFirstPage=stamp, onLaterPages=stamp)
+    else:
+        doc.build(story)
     return buf.getvalue()
 
 
@@ -535,3 +553,68 @@ def generate_invoice_for_pago(pago, tipo="factura"):
     drive_id  = upload_to_drive(pdf_bytes, f"{num_doc}.pdf", int(year_str), int(month_str), folder_id)
 
     return num_doc, drive_id
+
+
+def regenerate_anulada_pdf(documento) -> str:
+    """Re-render a Documento's PDF with an ANULADA watermark and move it to the
+    Anuladas subfolder in Drive. Reuses the existing num_doc — does not
+    consume a new invoice number. Returns the new Drive file id.
+    """
+    pago = documento.pago
+    if pago is None:
+        raise ValueError(f"Documento {documento.id} has no linked Pago; cannot regenerate.")
+    emisor = pago.emisor
+    if emisor is None:
+        raise ValueError(f"Pago {pago.id} has no emisor assigned.")
+
+    pagador, alumno, grupo = pago.pagador, pago.alumno, pago.grupo
+    extras = pago.extras or []
+    metodo = pago.metodo or ""
+    fecha  = pago.fecha or date.today()
+    if isinstance(fecha, str):
+        fecha = date.fromisoformat(fecha)
+    theme = THEME_RANGERS if getattr(emisor, "slug", "") == "rangers" else THEME_CAMIANDCO
+
+    pdf_bytes = generate_pdf_bytes(
+        academia_nombre   = emisor.nombre,
+        academia_autonoma = emisor.autonoma,
+        academia_dir      = emisor.direccion,
+        academia_ciudad   = emisor.ciudad,
+        academia_tel      = emisor.telefono,
+        academia_email    = getattr(emisor, "email", "") or "",
+        academia_cif      = emisor.nif,
+        iban              = emisor.iban,
+        pagador_nombre  = pagador.nombre if pagador else "",
+        pagador_nif     = getattr(pagador, "nif",      "") or "",
+        pagador_tel     = getattr(pagador, "telefono", "") or "",
+        pagador_email   = getattr(pagador, "email",    "") or "",
+        alumno_nombre   = alumno.nombre if alumno else "",
+        grupo_nombre    = grupo.nombre if grupo else "",
+        periodo         = pago.periodo,
+        mensualidad     = pago.mensualidad,
+        descuento       = pago.descuento,
+        extras          = extras,
+        total           = pago.total,
+        metodo          = metodo,
+        concepto_libre  = getattr(pago, "concepto_libre", "") or "",
+        num_doc         = documento.num_doc,
+        fecha           = fecha,
+        tipo            = documento.tipo,
+        theme           = theme,
+        watermark       = "ANULADA",
+    )
+
+    year_str, month_str = pago.periodo.split("-")
+    folder_id = emisor.drive_folder_id or os.environ.get("GOOGLE_DRIVE_FOLDER_ID") or ""
+    new_id = upload_to_drive(
+        pdf_bytes, f"{documento.num_doc}.pdf",
+        int(year_str), int(month_str), folder_id, subfolder="Anuladas",
+    )
+
+    if documento.s3_key:
+        try:
+            delete_drive_file(documento.s3_key)
+        except Exception as e:
+            print(f"[anular] could not remove original Drive file {documento.s3_key}: {e}")
+
+    return new_id

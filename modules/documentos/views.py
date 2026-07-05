@@ -1,6 +1,7 @@
 import os
 
 from django.http import HttpResponse
+from django.utils import timezone
 from rest_framework import permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -59,10 +60,18 @@ class DocumentoViewSet(ModelViewSet):
             s3_key     = drive_id,       # Drive file id stored here
             local_path = "",
             mime_type  = "application/pdf",
+            estado     = "emitida",
+            emitida_at = timezone.now(),
         )
 
         pago.num_doc = num_doc
         pago.save(update_fields=["num_doc"])
+
+        try:
+            from .sheets_log import log_emision
+            log_emision(doc)
+        except Exception as e:
+            print(f"[generar] sheet log failed (non-critical): {e}")
 
         return Response(DocumentoSerializer(doc).data, status=status.HTTP_201_CREATED)
 
@@ -108,22 +117,47 @@ class DocumentoViewSet(ModelViewSet):
     def destroy(self, request, *args, **kwargs):
         doc = self.get_object()
 
-        # Delete from Drive
-        if doc.s3_key:
-            try:
-                from .invoice_service import delete_drive_file
-                delete_drive_file(doc.s3_key)
-            except Exception as e:
-                print(f"Drive delete error (non-critical): {e}")
+        if doc.is_issued:
+            return Response(
+                {"error": "Este documento ya está emitido: no se puede eliminar, solo anular."},
+                status=status.HTTP_409_CONFLICT,
+            )
 
-        # Delete local file (legacy)
-        if doc.local_path:
-            for path in (doc.local_path, doc.local_path.replace(".pdf", ".docx")):
-                if path and os.path.exists(path):
-                    try:
-                        os.remove(path)
-                    except OSError:
-                        pass
-
+        # borrador only — never had a Drive/local file to clean up
         doc.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=True, methods=["post"], url_path="anular")
+    def anular(self, request, pk=None):
+        doc = self.get_object()
+        if doc.estado == "anulada":
+            return Response({"error": "Este documento ya está anulado."}, status=status.HTTP_400_BAD_REQUEST)
+        if not doc.is_issued:
+            return Response({"error": "Un borrador se elimina, no se anula."}, status=status.HTTP_400_BAD_REQUEST)
+
+        motivo = (request.data.get("motivo_anulacion") or "").strip()
+        if not motivo:
+            return Response({"error": "motivo_anulacion es obligatorio."}, status=status.HTTP_400_BAD_REQUEST)
+
+        from .invoice_service import regenerate_anulada_pdf
+        try:
+            new_drive_id = regenerate_anulada_pdf(doc)
+        except Exception as e:
+            return Response(
+                {"error": f"Error regenerando PDF anulado: {e}"},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        doc.estado           = "anulada"
+        doc.anulada_at       = timezone.now()
+        doc.motivo_anulacion = motivo
+        doc.s3_key           = new_drive_id
+        doc.save(update_fields=["estado", "anulada_at", "motivo_anulacion", "s3_key"])
+
+        try:
+            from .sheets_log import log_anulacion
+            log_anulacion(doc)
+        except Exception as e:
+            print(f"[anular] sheet log failed (non-critical): {e}")
+
+        return Response(DocumentoSerializer(doc).data)

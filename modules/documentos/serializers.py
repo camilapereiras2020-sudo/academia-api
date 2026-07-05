@@ -11,8 +11,12 @@ class DocumentoSerializer(serializers.ModelSerializer):
         fields = [
             "id", "pago", "tipo", "nombre", "num_doc",
             "mime_type", "download_url", "pago_info", "created_at",
+            "estado", "emitida_at", "anulada_at", "motivo_anulacion",
         ]
-        read_only_fields = ["id", "created_at", "download_url", "pago_info"]
+        read_only_fields = [
+            "id", "created_at", "download_url", "pago_info",
+            "estado", "emitida_at", "anulada_at", "motivo_anulacion",
+        ]
 
     def get_download_url(self, obj):
         return f"/api/v1/documentos/{obj.id}/descargar/"

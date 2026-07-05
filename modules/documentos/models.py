@@ -5,6 +5,13 @@ User = get_user_model()
 
 TIPO_CHOICES = [("factura", "Factura"), ("recibo", "Recibo"), ("otro", "Otro")]
 
+ESTADO_CHOICES = [
+    ("borrador", "Borrador"),
+    ("emitida", "Emitida"),
+    ("anulada", "Anulada"),
+    ("rectificada", "Rectificada"),
+]
+
 
 class Emisor(models.Model):
     academia         = models.ForeignKey(User, on_delete=models.CASCADE, related_name="emisores")
@@ -51,8 +58,18 @@ class Documento(models.Model):
     mime_type  = models.CharField(max_length=100, default="application/pdf")
     created_at = models.DateTimeField(auto_now_add=True)
 
+    estado           = models.CharField(max_length=20, choices=ESTADO_CHOICES, default="borrador")
+    emitida_at       = models.DateTimeField(null=True, blank=True)
+    anulada_at       = models.DateTimeField(null=True, blank=True)
+    motivo_anulacion = models.TextField(blank=True)
+
     class Meta:
         ordering = ["-created_at"]
 
     def __str__(self):
         return self.nombre
+
+    @property
+    def is_issued(self) -> bool:
+        """True if this document was ever actually uploaded/sent — never hard-deletable."""
+        return self.estado != "borrador" or bool(self.s3_key) or bool(self.local_path)

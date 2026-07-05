@@ -9,6 +9,7 @@ Usage:
 from datetime import date
 
 from django.core.management.base import BaseCommand
+from django.utils import timezone
 
 from modules.documentos.models import Documento, Emisor
 from modules.documentos.invoice_service import generate_invoice_for_pago
@@ -87,6 +88,8 @@ class Command(BaseCommand):
                     s3_key     = drive_id,
                     local_path = "",
                     mime_type  = "application/pdf",
+                    estado     = "emitida",
+                    emitida_at = timezone.now(),
                 )
                 pago.num_doc = num_doc
                 pago.save(update_fields=["num_doc"])

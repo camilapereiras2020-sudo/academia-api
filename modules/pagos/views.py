@@ -112,7 +112,7 @@ class PagoViewSet(ModelViewSet):
             from modules.documentos.models import Documento
             tipo = "factura" if pago.metodo.lower() in METODOS_FACTURA else "recibo"
             num_doc, drive_id = generate_invoice_for_pago(pago, tipo)
-            Documento.objects.create(
+            doc = Documento.objects.create(
                 academia   = pago.academia,
                 pago       = pago,
                 tipo       = tipo,
@@ -121,6 +121,8 @@ class PagoViewSet(ModelViewSet):
                 s3_key     = drive_id,
                 local_path = "",
                 mime_type  = "application/pdf",
+                estado     = "emitida",
+                emitida_at = timezone.now(),
             )
             pago.num_doc = num_doc
             pago.save(update_fields=["num_doc"])
@@ -128,12 +130,58 @@ class PagoViewSet(ModelViewSet):
                 _send_payment_email(pago, num_doc, emisor.nombre)
             except Exception as e:
                 print(f"[email] notification failed for pago {pago.id}: {e}")
+            try:
+                from modules.documentos.sheets_log import log_emision
+                log_emision(doc)
+            except Exception as e:
+                print(f"[invoice] sheet log failed (non-critical): {e}")
         except Exception as e:
             err = str(e)
             print(f"[invoice] auto-generate failed for pago {pago.id}: {err}")
             note = f"⚠ Factura no generada: {err}"
             pago.notas = ((pago.notas or "") + "\n" + note).strip()
             pago.save(update_fields=["notas"])
+
+    def destroy(self, request, *args, **kwargs):
+        pago = self.get_object()
+        if any(doc.is_issued for doc in pago.documentos.all()):
+            return Response(
+                {"error": "Este pago tiene documentos emitidos: anúlalos en vez de eliminar el pago."},
+                status=status.HTTP_409_CONFLICT,
+            )
+        return super().destroy(request, *args, **kwargs)
+
+    @action(detail=True, methods=["post"], url_path="anular")
+    def anular(self, request, pk=None):
+        from modules.documentos.invoice_service import regenerate_anulada_pdf
+        from modules.documentos.sheets_log import log_anulacion
+
+        pago = self.get_object()
+        motivo = (request.data.get("motivo_anulacion") or "").strip()
+        if not motivo:
+            return Response({"error": "motivo_anulacion es obligatorio."}, status=status.HTTP_400_BAD_REQUEST)
+
+        docs = [d for d in pago.documentos.all() if d.is_issued and d.estado != "anulada"]
+        if not docs:
+            return Response({"error": "No hay documentos emitidos para anular."}, status=status.HTTP_400_BAD_REQUEST)
+
+        now = timezone.now()
+        for doc in docs:
+            try:
+                doc.s3_key = regenerate_anulada_pdf(doc)
+            except Exception as e:
+                return Response(
+                    {"error": f"Error regenerando PDF anulado ({doc.num_doc}): {e}"},
+                    status=status.HTTP_502_BAD_GATEWAY,
+                )
+            doc.estado, doc.anulada_at, doc.motivo_anulacion = "anulada", now, motivo
+            doc.save(update_fields=["estado", "anulada_at", "motivo_anulacion", "s3_key"])
+            try:
+                log_anulacion(doc)
+            except Exception as e:
+                print(f"[anular] sheet log failed (non-critical): {e}")
+
+        return Response(PagoSerializer(pago).data)
 
     @action(detail=True, methods=["post"], url_path="marcar-pagado")
     def marcar_pagado(self, request, pk=None):
