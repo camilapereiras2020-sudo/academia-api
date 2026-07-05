@@ -149,6 +149,44 @@ class PagoViewSet(ModelViewSet):
         if estado_carga: qs = qs.filter(estado_carga=estado_carga)
         return qs
 
+    @action(detail=False, methods=["get"], url_path="sugerencias")
+    def sugerencias(self, request):
+        """For each pendiente_completar draft, suggest an alumno/pagador (and
+        the matched alumno's grupo, if any) by fuzzy-matching concepto_original.
+        Read-only — no writes, no invoice generation, no external calls.
+        """
+        from modules.alumnos.models import Alumno
+        from modules.pagadores.models import Pagador
+        from modules.grupos.models import Grupo
+        from .matching import best_match
+
+        drafts = Pago.objects.filter(
+            academia=request.user, estado_carga="pendiente_completar"
+        ).select_related("emisor").order_by("numero_factura_reservado", "fecha")
+
+        alumnos_qs   = Alumno.objects.filter(academia=request.user).values_list("id", "nombre", "grupo_id")
+        alumno_candidates = [(aid, nombre) for aid, nombre, _ in alumnos_qs]
+        grupo_by_alumno   = {aid: grupo_id for aid, _, grupo_id in alumnos_qs}
+        pagador_candidates = list(Pagador.objects.filter(academia=request.user).values_list("id", "nombre"))
+        grupo_nombres = dict(Grupo.objects.filter(academia=request.user).values_list("id", "nombre"))
+
+        rows = []
+        for pago in drafts:
+            sug_alumno  = best_match(pago.concepto_original, alumno_candidates)
+            sug_pagador = best_match(pago.concepto_original, pagador_candidates)
+            sug_grupo   = None
+            if sug_alumno:
+                gid = grupo_by_alumno.get(sug_alumno["id"])
+                if gid:
+                    sug_grupo = {"id": gid, "nombre": grupo_nombres.get(gid, "")}
+            rows.append({
+                "pago": PagoSerializer(pago).data,
+                "sugerencia_alumno": sug_alumno,
+                "sugerencia_pagador": sug_pagador,
+                "sugerencia_grupo": sug_grupo,
+            })
+        return Response(rows)
+
     def perform_create(self, serializer):
         emisor = _resolve_emisor(self.request.user, self.request.data.get("emisor"))
         pago   = serializer.save(academia=self.request.user, emisor=emisor)
