@@ -5,12 +5,13 @@ from modules.tarifas.models import MARCA_CHOICES
 User = get_user_model()
 
 ESTADO_CHOICES = [("pagado", "Pagado"), ("pendiente", "Pendiente"), ("parcial", "Pago parcial")]
+ESTADO_CARGA_CHOICES = [("completo", "Completo"), ("pendiente_completar", "Pendiente de completar")]
 
 class Pago(models.Model):
     academia = models.ForeignKey(User, on_delete=models.CASCADE, related_name="pagos")
     marca = models.CharField(max_length=20, choices=MARCA_CHOICES, default="rangers_academy")
-    pagador = models.ForeignKey("pagadores.Pagador", on_delete=models.PROTECT, related_name="pagos")
-    alumno = models.ForeignKey("alumnos.Alumno", on_delete=models.PROTECT, related_name="pagos")
+    pagador = models.ForeignKey("pagadores.Pagador", on_delete=models.PROTECT, related_name="pagos", null=True, blank=True)
+    alumno = models.ForeignKey("alumnos.Alumno", on_delete=models.PROTECT, related_name="pagos", null=True, blank=True)
     grupo = models.ForeignKey(
         "grupos.Grupo",
         on_delete=models.PROTECT,
@@ -45,6 +46,10 @@ class Pago(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    estado_carga             = models.CharField(max_length=20, choices=ESTADO_CARGA_CHOICES, default="completo")
+    numero_factura_reservado = models.CharField(max_length=30, blank=True)
+    concepto_original        = models.CharField(max_length=300, blank=True)
 
     class Meta:
         ordering = ["-created_at"]

@@ -45,6 +45,9 @@ class DocumentoViewSet(ModelViewSet):
 
         try:
             num_doc, drive_id = generate_invoice_for_pago(pago, tipo)
+        except ValueError as e:
+            # incomplete/misconfigured pago — a predictable client error, not a server fault
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             return Response(
                 {"error": f"Error generando documento: {str(e)}"},

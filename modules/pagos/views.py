@@ -79,6 +79,51 @@ def _resolve_emisor(user, emisor_id=None):
     return Emisor.objects.filter(academia=user, slug="camiandco").first()
 
 
+def _issue_invoice(pago):
+    """Generate the PDF, upload to Drive, create the Documento, email the
+    payer, and log to the Sheet. Shared by perform_create (normal pagos) and
+    perform_update's draft-completion path (bulk-imported pagos).
+    """
+    if not pago.emisor:
+        print(f"[invoice] no emisor found for pago {pago.id} — skipping PDF generation")
+        return
+
+    try:
+        from modules.documentos.invoice_service import generate_invoice_for_pago
+        from modules.documentos.models import Documento
+        tipo = "factura" if pago.metodo.lower() in METODOS_FACTURA else "recibo"
+        num_doc, drive_id = generate_invoice_for_pago(pago, tipo)
+        doc = Documento.objects.create(
+            academia   = pago.academia,
+            pago       = pago,
+            tipo       = tipo,
+            nombre     = f"{num_doc}.pdf",
+            num_doc    = num_doc,
+            s3_key     = drive_id,
+            local_path = "",
+            mime_type  = "application/pdf",
+            estado     = "emitida",
+            emitida_at = timezone.now(),
+        )
+        pago.num_doc = num_doc
+        pago.save(update_fields=["num_doc"])
+        try:
+            _send_payment_email(pago, num_doc, pago.emisor.nombre)
+        except Exception as e:
+            print(f"[email] notification failed for pago {pago.id}: {e}")
+        try:
+            from modules.documentos.sheets_log import log_emision
+            log_emision(doc)
+        except Exception as e:
+            print(f"[invoice] sheet log failed (non-critical): {e}")
+    except Exception as e:
+        err = str(e)
+        print(f"[invoice] auto-generate failed for pago {pago.id}: {err}")
+        note = f"⚠ Factura no generada: {err}"
+        pago.notas = ((pago.notas or "") + "\n" + note).strip()
+        pago.save(update_fields=["notas"])
+
+
 class PagoViewSet(ModelViewSet):
     serializer_class   = PagoSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -92,55 +137,34 @@ class PagoViewSet(ModelViewSet):
         alumno  = self.request.query_params.get("alumno")
         pagador = self.request.query_params.get("pagador")
         marca   = self.request.query_params.get("marca")
+        estado_carga = self.request.query_params.get("estado_carga")
         if estado:  qs = qs.filter(estado=estado)
         if periodo: qs = qs.filter(periodo=periodo)
         if alumno:  qs = qs.filter(alumno_id=alumno)
         if pagador: qs = qs.filter(pagador_id=pagador)
         if marca:   qs = qs.filter(marca=marca)
+        if estado_carga: qs = qs.filter(estado_carga=estado_carga)
         return qs
 
     def perform_create(self, serializer):
         emisor = _resolve_emisor(self.request.user, self.request.data.get("emisor"))
         pago   = serializer.save(academia=self.request.user, emisor=emisor)
 
-        if not emisor:
-            print(f"[invoice] no emisor found for pago {pago.id} — skipping PDF generation")
-            return
+        if pago.estado_carga == "pendiente_completar":
+            return  # bulk-imported draft — nothing to issue until it's completed
 
-        try:
-            from modules.documentos.invoice_service import generate_invoice_for_pago
-            from modules.documentos.models import Documento
-            tipo = "factura" if pago.metodo.lower() in METODOS_FACTURA else "recibo"
-            num_doc, drive_id = generate_invoice_for_pago(pago, tipo)
-            doc = Documento.objects.create(
-                academia   = pago.academia,
-                pago       = pago,
-                tipo       = tipo,
-                nombre     = f"{num_doc}.pdf",
-                num_doc    = num_doc,
-                s3_key     = drive_id,
-                local_path = "",
-                mime_type  = "application/pdf",
-                estado     = "emitida",
-                emitida_at = timezone.now(),
-            )
-            pago.num_doc = num_doc
-            pago.save(update_fields=["num_doc"])
-            try:
-                _send_payment_email(pago, num_doc, emisor.nombre)
-            except Exception as e:
-                print(f"[email] notification failed for pago {pago.id}: {e}")
-            try:
-                from modules.documentos.sheets_log import log_emision
-                log_emision(doc)
-            except Exception as e:
-                print(f"[invoice] sheet log failed (non-critical): {e}")
-        except Exception as e:
-            err = str(e)
-            print(f"[invoice] auto-generate failed for pago {pago.id}: {err}")
-            note = f"⚠ Factura no generada: {err}"
-            pago.notas = ((pago.notas or "") + "\n" + note).strip()
-            pago.save(update_fields=["notas"])
+        _issue_invoice(pago)
+
+    def perform_update(self, serializer):
+        was_pending = serializer.instance.estado_carga == "pendiente_completar"
+        pago = serializer.save()
+
+        if was_pending and pago.alumno_id and pago.pagador_id:
+            if not pago.emisor_id:
+                pago.emisor = _resolve_emisor(self.request.user, self.request.data.get("emisor"))
+            pago.estado_carga = "completo"
+            pago.save(update_fields=["estado_carga", "emisor"])
+            _issue_invoice(pago)
 
     def destroy(self, request, *args, **kwargs):
         pago = self.get_object()

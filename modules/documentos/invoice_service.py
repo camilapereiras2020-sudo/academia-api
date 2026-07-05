@@ -194,14 +194,21 @@ def _next_invoice_number(emisor, tipo: str) -> str:
             academia=emisor.academia,
             num_doc__startswith=prefix,
             num_doc__endswith=suffix,
-        ),
+        ).values_list("num_doc", flat=True),
         Pago.objects.filter(
             academia=emisor.academia,
             num_doc__startswith=prefix,
             num_doc__endswith=suffix,
-        ),
+        ).values_list("num_doc", flat=True),
+        # numbers already reserved for a not-yet-completed draft Pago (bulk
+        # import) must also block reuse, even though they haven't been issued
+        Pago.objects.filter(
+            academia=emisor.academia,
+            numero_factura_reservado__startswith=prefix,
+            numero_factura_reservado__endswith=suffix,
+        ).values_list("numero_factura_reservado", flat=True),
     ):
-        for num_doc in qs.values_list("num_doc", flat=True):
+        for num_doc in qs:
             try:
                 middle  = num_doc[len(prefix) : -len(suffix)]
                 max_num = max(max_num, int(middle))
@@ -500,6 +507,13 @@ def generate_invoice_for_pago(pago, tipo="factura"):
     """Generate PDF for a Pago using its Emisor, upload to Drive.
     Returns (num_doc, drive_file_id).
     """
+    if pago.estado_carga == "pendiente_completar" or not pago.alumno_id or not pago.pagador_id:
+        raise ValueError(
+            f"Pago {pago.id} está incompleto (estado_carga={pago.estado_carga!r}, "
+            f"alumno={pago.alumno_id}, pagador={pago.pagador_id}) — "
+            "complétalo antes de generar factura/recibo."
+        )
+
     emisor  = pago.emisor
     if emisor is None:
         raise ValueError(f"Pago {pago.id} has no emisor assigned.")
@@ -512,7 +526,10 @@ def generate_invoice_for_pago(pago, tipo="factura"):
 
     es_fac   = metodo.lower() in METODOS_FACTURA if metodo else True
     tipo_doc = "factura" if es_fac else "recibo"
-    num_doc  = _next_invoice_number(emisor, tipo_doc)
+    # A bulk-imported draft may already carry a pre-assigned number (e.g. from
+    # an external Bizum/TaxFix reconciliation) — honor it instead of
+    # allocating a new one.
+    num_doc  = pago.numero_factura_reservado or _next_invoice_number(emisor, tipo_doc)
 
     fecha = pago.fecha or date.today()
     if isinstance(fecha, str):
