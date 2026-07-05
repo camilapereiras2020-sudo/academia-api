@@ -243,3 +243,55 @@ class DraftCompletionFlowTests(TestCase):
         )
         resp = self.client.patch(f"/api/v1/pagos/{self.draft.id}/", {"alumno": None}, format="json")
         self.assertEqual(resp.status_code, 400)
+
+    @patch("modules.pagos.views._issue_invoice")
+    def test_create_with_guardar_como_borrador_skips_invoice_and_stays_pending(self, mock_issue):
+        resp = self.client.post(
+            "/api/v1/pagos/",
+            {
+                "periodo": "2026-07", "total": 90, "metodo": "efectivo",
+                "guardar_como_borrador": True,
+                # alumno/pagador/grupo deliberately omitted, same as an import draft
+            },
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 201, resp.content)
+        pago = Pago.objects.get(id=resp.json()["id"])
+        self.assertEqual(pago.estado_carga, "pendiente_completar")
+        self.assertIsNone(pago.alumno_id)
+        self.assertIsNone(pago.pagador_id)
+        self.assertEqual(pago.num_doc, "")
+        self.assertEqual(pago.numero_factura_reservado, "")
+        mock_issue.assert_not_called()
+
+    @patch("modules.pagos.views._issue_invoice")
+    def test_create_without_guardar_como_borrador_issues_normally(self, mock_issue):
+        resp = self.client.post(
+            "/api/v1/pagos/",
+            {
+                "periodo": "2026-07", "total": 90, "metodo": "efectivo",
+                "alumno": self.alumno.id, "pagador": self.pagador.id,
+            },
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 201, resp.content)
+        pago = Pago.objects.get(id=resp.json()["id"])
+        self.assertEqual(pago.estado_carga, "completo")
+        mock_issue.assert_called_once()
+
+    def test_manual_draft_appears_in_sugerencias_alongside_imported_ones(self):
+        resp = self.client.post(
+            "/api/v1/pagos/",
+            {"periodo": "2026-07", "total": 40, "metodo": "efectivo", "guardar_como_borrador": True},
+            format="json",
+        )
+        manual_draft_id = resp.json()["id"]
+
+        rows = self.client.get("/api/v1/pagos/sugerencias/").json()
+        ids = {r["pago"]["id"] for r in rows}
+        self.assertIn(manual_draft_id, ids)   # the manually-created one
+        self.assertIn(self.draft.id, ids)     # the pre-existing "imported" one from setUp
+        manual_row = next(r for r in rows if r["pago"]["id"] == manual_draft_id)
+        # no concepto_original -> nothing to fuzzy-match against -> no crash, no suggestion
+        self.assertIsNone(manual_row["sugerencia_alumno"])
+        self.assertIsNone(manual_row["sugerencia_pagador"])

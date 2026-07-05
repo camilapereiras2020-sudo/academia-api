@@ -196,8 +196,17 @@ class PagoViewSet(ModelViewSet):
         emisor = _resolve_emisor(self.request.user, self.request.data.get("emisor"))
         pago   = serializer.save(academia=self.request.user, emisor=emisor)
 
+        if self.request.data.get("guardar_como_borrador"):
+            # Manual "save as draft" — estado_carga is read-only on the
+            # serializer (so a client can't set it directly), so this is a
+            # deliberate request-level signal instead. Same fate as a
+            # bulk-imported draft: no number, no invoice, until completed.
+            pago.estado_carga = "pendiente_completar"
+            pago.save(update_fields=["estado_carga"])
+            return
+
         if pago.estado_carga == "pendiente_completar":
-            return  # bulk-imported draft — nothing to issue until it's completed
+            return  # created directly as a draft some other way (e.g. bulk import)
 
         _issue_invoice(pago)
 
