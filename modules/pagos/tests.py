@@ -265,7 +265,7 @@ class DraftCompletionFlowTests(TestCase):
         resp = self.client.post(
             "/api/v1/pagos/",
             {
-                "periodo": "2026-07", "total": 90, "metodo": "efectivo",
+                "periodo": "2026-07", "total": 90, "metodo": "efectivo", "marca": "cami_and_co",
                 "guardar_como_borrador": True,
                 # alumno/pagador/grupo deliberately omitted, same as an import draft
             },
@@ -285,7 +285,7 @@ class DraftCompletionFlowTests(TestCase):
         resp = self.client.post(
             "/api/v1/pagos/",
             {
-                "periodo": "2026-07", "total": 90, "metodo": "efectivo",
+                "periodo": "2026-07", "total": 90, "metodo": "efectivo", "marca": "cami_and_co",
                 "alumno": self.alumno.id, "pagador": self.pagador.id,
             },
             format="json",
@@ -295,10 +295,24 @@ class DraftCompletionFlowTests(TestCase):
         self.assertEqual(pago.estado_carga, "completo")
         mock_issue.assert_called_once()
 
+    def test_create_without_marca_is_rejected(self):
+        # marca has a model-level default ("rangers_academy") purely for
+        # internal scripts (healthcheck.py) that don't care -- the real API
+        # must never silently fall back to it. This is the actual bug
+        # behind CC272/273/274-26 shipping tagged rangers_academy despite
+        # being genuine Cami&Co invoices.
+        resp = self.client.post(
+            "/api/v1/pagos/",
+            {"periodo": "2026-07", "total": 90, "metodo": "efectivo", "guardar_como_borrador": True},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("marca", resp.json())
+
     def test_manual_draft_appears_in_sugerencias_alongside_imported_ones(self):
         resp = self.client.post(
             "/api/v1/pagos/",
-            {"periodo": "2026-07", "total": 40, "metodo": "efectivo", "guardar_como_borrador": True},
+            {"periodo": "2026-07", "total": 40, "metodo": "efectivo", "marca": "cami_and_co", "guardar_como_borrador": True},
             format="json",
         )
         manual_draft_id = resp.json()["id"]

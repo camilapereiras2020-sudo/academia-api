@@ -1,7 +1,15 @@
 from rest_framework import serializers
 from .models import Pago
+from modules.tarifas.models import MARCA_CHOICES
 
 class PagoSerializer(serializers.ModelSerializer):
+    # Required on create despite the model's default="rangers_academy" —
+    # that default exists only so internal scripts (healthcheck.py etc.)
+    # don't need to care about it; a real Pago must have an explicit,
+    # deliberate brand choice. PATCH stays exempt (DRF skips required-field
+    # checks for partial updates), so completing a draft that already has
+    # a marca doesn't force resending it.
+    marca = serializers.ChoiceField(choices=MARCA_CHOICES, required=True)
     pagador_nombre = serializers.CharField(source="pagador.nombre", read_only=True, default=None)
     alumno_nombre  = serializers.CharField(source="alumno.nombre",  read_only=True, default=None)
     grupo_nombre   = serializers.CharField(source="grupo.nombre",   read_only=True, default=None)
