@@ -9,18 +9,24 @@ from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand
 
 from modules.alumnos.models import Alumno
+from modules.pagadores.models import Pagador
 from modules.pagos.models import ConceptoAlias
 
 User = get_user_model()
 
-# alias_text -> (alumno_nombre_exact, pagador_nombre_exact | None)
-# NOTE: "Ramirez Gonzalez Arturo" / "Arturo" intentionally NOT seeded here —
-# no alumno or pagador named Arturo exists anywhere in the DB, and the
-# alumno this was guessed to relate to (Alba Ramírez Martín) is her own
-# self-pay pagador, not a distinct "Arturo". Needs a human decision before
-# any alias can be added for it.
+# alias_text -> (alumno_nombre_exact | None, pagador_nombre_exact | None)
 SEEDS = [
-    ("Tete", "Tere", None),
+    # "Tete"/"Tere" never share a token with "Mª Teresa" (the "M" in "Mª"
+    # is dropped as a length-1 token, leaving "teresa" — which still never
+    # appears in either Bizum variant). Alumno side self-resolves for
+    # "Tere" via direct name match already; only the pagador side needs
+    # the alias, for both spellings.
+    ("Tete", "Tere", "Mª Teresa"),
+    ("Tere", None, "Mª Teresa"),
+    # Resolved 2026-07-06: Arturo Ramírez confirmed as Alba's primary
+    # pagador (Montse, the other parent, waits on the multi-payer model).
+    ("Ramirez Gonzalez Arturo", "Alba Ramírez Martín", "Arturo Ramírez"),
+    ("Arturo", "Alba Ramírez Martín", "Arturo Ramírez"),
 ]
 
 
@@ -39,9 +45,16 @@ class Command(BaseCommand):
                 self.stdout.write(self.style.ERROR(f"SKIP {alias_text!r}: alumno {alumno_nombre!r} no encontrado"))
                 continue
 
-            alias, created = ConceptoAlias.objects.get_or_create(
+            pagador = Pagador.objects.filter(academia=user, nombre=pagador_nombre).first() if pagador_nombre else None
+            if pagador_nombre and not pagador:
+                self.stdout.write(self.style.ERROR(f"SKIP {alias_text!r}: pagador {pagador_nombre!r} no encontrado"))
+                continue
+
+            _, created = ConceptoAlias.objects.update_or_create(
                 academia=user, alias_text=alias_text,
-                defaults={"alumno": alumno, "pagador": None},
+                defaults={"alumno": alumno, "pagador": pagador},
             )
-            verb = "Creado" if created else "Ya existía"
-            self.stdout.write(self.style.SUCCESS(f"{verb}: {alias_text!r} -> alumno {alumno_nombre!r}"))
+            verb = "Creado" if created else "Actualizado"
+            self.stdout.write(self.style.SUCCESS(
+                f"{verb}: {alias_text!r} -> alumno={alumno_nombre!r} pagador={pagador_nombre!r}"
+            ))

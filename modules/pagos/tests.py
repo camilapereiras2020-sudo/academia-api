@@ -129,6 +129,22 @@ class MatchingTests(TestCase):
         self.assertEqual(result["id"], 25)
         self.assertEqual(result["score"], 1.0)
 
+    def test_ma_prefix_does_not_become_a_spurious_given_name_token(self):
+        # "Mª" (feminine ordinal indicator, not a precomposed accented
+        # letter) doesn't survive NFD accent-stripping and gets replaced by
+        # the tokenizer's punctuation regex, leaving a bare length-1 "m"
+        # that the >=2-char filter drops -- so the given name correctly
+        # ends up being "teresa", not "m". Neither "Tete" nor "Tere" share
+        # any token with "teresa" though, so real-world resolution for
+        # this pagador still needs the alias table (see
+        # seed_concepto_alias.py), not token matching alone.
+        self.assertEqual(_tokenize("Mª Teresa"), ["teresa"])
+        self.assertIsNone(best_match("Ingreso Bizum - Clases Tere", [(19, "Mª Teresa")]))
+        result = best_match(
+            "Ingreso Bizum - Clases Tere", [(19, "Mª Teresa")], aliases={"Tere": 19},
+        )
+        self.assertEqual(result, {"id": 19, "nombre": "Mª Teresa", "score": 1.0})
+
     def test_all_real_csv_conceptos_do_not_crash(self):
         for concepto in REAL_CONCEPTOS:
             best_match(concepto, CANDIDATE_ALUMNOS)  # just must not raise
