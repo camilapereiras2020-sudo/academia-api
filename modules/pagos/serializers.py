@@ -18,11 +18,11 @@ class PagoSerializer(serializers.ModelSerializer):
             "periodo", "mensualidad", "descuento", "extras", "total",
             "metodo", "estado", "fecha", "horas_trabajadas", "notas",
             "num_doc", "serie_id", "iban", "stripe_payment_intent", "created_at",
-            "estado_carga", "numero_factura_reservado", "concepto_original",
+            "estado_carga", "numero_factura_reservado", "concepto_original", "concepto_libre",
         ]
         read_only_fields = [
             "id", "created_at", "num_doc", "serie_id", "emisor", "emisor_nombre", "tarifa_nombre",
-            "estado_carga", "numero_factura_reservado",
+            "estado_carga", "numero_factura_reservado", "concepto_original",
         ]
 
     def validate(self, attrs):

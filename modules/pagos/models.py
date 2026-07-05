@@ -50,6 +50,7 @@ class Pago(models.Model):
     estado_carga             = models.CharField(max_length=20, choices=ESTADO_CARGA_CHOICES, default="completo")
     numero_factura_reservado = models.CharField(max_length=30, blank=True)
     concepto_original        = models.CharField(max_length=300, blank=True)
+    concepto_libre           = models.CharField(max_length=300, blank=True)
 
     class Meta:
         ordering = ["-created_at"]
