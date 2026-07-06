@@ -9,7 +9,7 @@ real invoice generation or send a real email.
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
 from modules.alumnos.models import Alumno
@@ -325,3 +325,91 @@ class DraftCompletionFlowTests(TestCase):
         # no concepto_original -> nothing to fuzzy-match against -> no crash, no suggestion
         self.assertIsNone(manual_row["sugerencia_alumno"])
         self.assertIsNone(manual_row["sugerencia_pagador"])
+
+    @override_settings(RESEND_API_KEY="test_key_for_pipeline_check")
+    @patch("resend.Emails.send")
+    @patch("modules.documentos.invoice_service.upload_to_drive")
+    def test_full_pipeline_end_to_end_with_mocked_external_calls(self, mock_upload, mock_resend_send):
+        """Create -> appear in batch review -> complete via the exact same PATCH
+        the review screen's Save button issues -> real number allocation, real
+        PDF generation, real email-content building -- only the two actual
+        network calls (Drive upload, Resend send) are intercepted. Prints the
+        exact captured payloads so they can be eyeballed before doing this for
+        real on a production row.
+        """
+        mock_upload.return_value = "FAKE_DRIVE_FILE_ID_FOR_TEST"
+
+        alumno = Alumno.objects.create(academia=self.user, nombre="Synthetic Alumno E2E")
+        pagador = Pagador.objects.create(
+            academia=self.user, nombre="Synthetic Pagador E2E", email="synthetic-e2e@example.test",
+        )
+        self.emisor.drive_folder_id = "FAKE_FOLDER_ID_FOR_TEST"
+        self.emisor.save(update_fields=["drive_folder_id"])
+
+        # 1) create a draft exactly as "Guardar como borrador" does
+        create_resp = self.client.post(
+            "/api/v1/pagos/",
+            {
+                "periodo": "2026-07", "total": 123.45, "metodo": "transferencia",
+                "marca": "cami_and_co", "guardar_como_borrador": True,
+            },
+            format="json",
+        )
+        self.assertEqual(create_resp.status_code, 201, create_resp.content)
+        draft_id = create_resp.json()["id"]
+        mock_upload.assert_not_called()
+        mock_resend_send.assert_not_called()
+
+        # 2) confirm it's picked up by the same endpoint the batch-review screen reads
+        sug_resp = self.client.get("/api/v1/pagos/sugerencias/")
+        row = next(r for r in sug_resp.json() if r["pago"]["id"] == draft_id)
+        self.assertEqual(row["pago"]["estado_carga"], "pendiente_completar")
+
+        # 3) complete it -- exactly the PATCH the batch-review screen's per-row Save issues
+        patch_resp = self.client.patch(
+            f"/api/v1/pagos/{draft_id}/",
+            {"alumno": alumno.id, "pagador": pagador.id},
+            format="json",
+        )
+        self.assertEqual(patch_resp.status_code, 200, patch_resp.content)
+
+        draft = Pago.objects.get(id=draft_id)
+        self.assertEqual(draft.estado_carga, "completo")
+        self.assertTrue(draft.num_doc.startswith("CC"))
+        self.assertNotEqual(draft.num_doc, "")
+
+        # 4) inspect exactly what would have gone to Drive
+        mock_upload.assert_called_once()
+        pdf_bytes, filename, year, month, folder_id = mock_upload.call_args[0][:5]
+        self.assertTrue(pdf_bytes[:4] == b"%PDF")   # a real PDF was actually built
+        self.assertGreater(len(pdf_bytes), 1000)
+        self.assertEqual(filename, f"{draft.num_doc}.pdf")
+        self.assertEqual(year, 2026)
+        self.assertEqual(month, 7)
+        self.assertEqual(folder_id, "FAKE_FOLDER_ID_FOR_TEST")
+
+        # 5) inspect exactly what would have gone to the email API
+        mock_resend_send.assert_called_once()
+        email_payload = mock_resend_send.call_args[0][0]
+        self.assertEqual(email_payload["to"], ["synthetic-e2e@example.test"])
+        self.assertIn(draft.num_doc, email_payload["subject"])
+        self.assertIn("Synthetic Alumno E2E", email_payload["html"])
+        self.assertIn("Synthetic Pagador E2E", email_payload["html"])
+        self.assertIn("123,45", email_payload["html"])  # eur-formatted total
+        self.assertIn("Cami&Co", email_payload["html"])  # emisor name
+
+        print("\n" + "=" * 70)
+        print("DRIVE UPLOAD CALL (mocked -- nothing actually sent):")
+        print(f"  filename={filename!r} year={year} month={month} folder_id={folder_id!r}")
+        print(f"  pdf_bytes: {len(pdf_bytes)} bytes, starts with {pdf_bytes[:8]!r}")
+        print("\nEMAIL SEND CALL (mocked -- nothing actually sent):")
+        print(f"  to={email_payload['to']!r}")
+        print(f"  subject={email_payload['subject']!r}")
+        print(f"  from={email_payload['from']!r}")
+        print(f"  html contains: num_doc={draft.num_doc in email_payload['html']}, "
+              f"alumno={'Synthetic Alumno E2E' in email_payload['html']}, "
+              f"pagador={'Synthetic Pagador E2E' in email_payload['html']}, "
+              f"total='123,45' in html={'123,45' in email_payload['html']}, "
+              f"emisor='Cami&Co' in html={'Cami&Co' in email_payload['html']}")
+        print(f"  full html length: {len(email_payload['html'])} chars")
+        print("=" * 70)
