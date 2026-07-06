@@ -123,6 +123,7 @@ class LeadViewSet(ModelViewSet):
         alumno = Alumno.objects.create(
             academia=request.user,
             nombre=lead.nombre_alumno,
+            marca=lead.marca,
             pagador=pagador,
             grupo_id=grupo_id,
             nivel=lead.nivel_estimado or "",
