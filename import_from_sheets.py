@@ -13,7 +13,14 @@ For each data row:
   - otherwise the alumno is created as before
 
 Usage:
-    venv/Scripts/python.exe import_from_sheets.py [--sheet-id ID] [--dry-run]
+    venv/Scripts/python.exe import_from_sheets.py --marca {rangers_academy|cami_and_co} [--sheet-id ID] [--dry-run]
+
+--marca is required and has no default -- the sheet itself has no brand
+column, so which brand this whole import run is for must be stated
+explicitly every time, rather than silently falling through to whatever
+the Alumno model's default happens to be (that silent fallback is what
+mislabeled 27 real Cami&Co students as Rangers Academy in the first
+place).
 
 Prompts for the platform superuser email/password interactively.
 """
@@ -142,6 +149,9 @@ def main():
     parser.add_argument("--api-base", default=API_BASE, help="Platform API base URL")
     parser.add_argument("--dry-run", action="store_true", help="Parse and report without calling the API")
     parser.add_argument("--row", type=int, help="Only import this one sheet row (1-indexed, e.g. 3 for the first data row)")
+    parser.add_argument("--marca", required=True, choices=["rangers_academy", "cami_and_co"],
+                         help="Brand/emisor for every alumno created OR corrected by this run. Required -- "
+                              "the sheet has no brand column, so this must be stated explicitly every run.")
     args = parser.parse_args()
 
     if not args.sheet_id:
@@ -240,6 +250,8 @@ def main():
                     patch_fields["pagador"] = pagador_id
                 if grupo_id is not None and grupo_id != existing.get("grupo"):
                     patch_fields["grupo"] = grupo_id
+                if args.marca != existing.get("marca"):
+                    patch_fields["marca"] = args.marca
 
                 if patch_fields:
                     if not args.dry_run:
@@ -253,6 +265,7 @@ def main():
             if not args.dry_run:
                 alumno = api.post("alumnos/", {
                     "nombre": nombre_alumno,
+                    "marca": args.marca,
                     "fecha_nacimiento": parse_fecha(_cell(row, COL_FECHA_NAC)),
                     "dni": _cell(row, COL_DNI_ALUMNO),
                     "telefono": _cell(row, COL_TEL_ALUMNO),
