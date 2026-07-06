@@ -129,9 +129,10 @@ def _folder(service, name, parent_id=None):
 
 
 def _trimester(month):
-    if month <= 4:  return "T1 (Enero-Abril)"
-    if month <= 8:  return "T2 (Mayo-Agosto)"
-    return "T3 (Septiembre-Diciembre)"
+    if month <= 3:  return "T1 (Enero-Marzo)"
+    if month <= 6:  return "T2 (Abril-Junio)"
+    if month <= 9:  return "T3 (Julio-Septiembre)"
+    return "T4 (Octubre-Diciembre)"
 
 
 def upload_to_drive(pdf_bytes: bytes, filename: str, year: int, month: int,
@@ -140,7 +141,7 @@ def upload_to_drive(pdf_bytes: bytes, filename: str, year: int, month: int,
 
     folder_id: root Drive folder for this emisor. Falls back to
     GOOGLE_DRIVE_FOLDER_ID env var if not provided.
-    subfolder: if given (e.g. "Anuladas"), replaces the T1/T2/T3 trimester
+    subfolder: if given (e.g. "Anuladas"), replaces the T1-T4 quarter
     folder — used to segregate voided documents from the live ones.
     """
     root_id = folder_id or os.environ.get("GOOGLE_DRIVE_FOLDER_ID")
@@ -565,9 +566,10 @@ def generate_invoice_for_pago(pago, tipo="factura"):
         theme           = theme,
     )
 
-    year_str, month_str = pago.periodo.split("-")
+    # Drive quarter-folder placement follows the actual invoice date, not the
+    # billed periodo (a July-dated invoice for June's service goes in T3).
     folder_id = emisor.drive_folder_id or os.environ.get("GOOGLE_DRIVE_FOLDER_ID") or ""
-    drive_id  = upload_to_drive(pdf_bytes, f"{num_doc}.pdf", int(year_str), int(month_str), folder_id)
+    drive_id  = upload_to_drive(pdf_bytes, f"{num_doc}.pdf", fecha.year, fecha.month, folder_id)
 
     return num_doc, drive_id
 
@@ -621,11 +623,10 @@ def regenerate_anulada_pdf(documento) -> str:
         watermark       = "ANULADA",
     )
 
-    year_str, month_str = pago.periodo.split("-")
     folder_id = emisor.drive_folder_id or os.environ.get("GOOGLE_DRIVE_FOLDER_ID") or ""
     new_id = upload_to_drive(
         pdf_bytes, f"{documento.num_doc}.pdf",
-        int(year_str), int(month_str), folder_id, subfolder="Anuladas",
+        fecha.year, fecha.month, folder_id, subfolder="Anuladas",
     )
 
     if documento.s3_key:
