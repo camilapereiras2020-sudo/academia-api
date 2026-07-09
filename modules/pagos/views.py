@@ -10,7 +10,12 @@ from .constants import METODOS_FACTURA
 
 def _send_payment_email(pago, num_doc, emisor_nombre="Cami&Co"):
     from django.conf import settings
+    import os
     import resend
+
+    if os.environ.get("EMAIL_SENDING_ENABLED", "false").lower() != "true":
+        print(f"[email] EMAIL_SENDING_ENABLED is off — skipping email for pago {pago.id}")
+        return
 
     if not pago.alumno or not pago.pagador:
         return  # incomplete pago — nothing to email yet
