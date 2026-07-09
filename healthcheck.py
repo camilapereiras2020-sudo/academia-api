@@ -26,11 +26,21 @@ def log(status, section, msg):
     results.append((status, section, msg))
 
 
-# ── 1. GOOGLE TOKEN ──────────────────────────────────────────────────────────
-print("\n=== 1. GOOGLE_TOKEN_JSON ===")
+# ── 1. GOOGLE CREDENTIALS ────────────────────────────────────────────────────
+print("\n=== 1. GOOGLE CREDENTIALS ===")
+sa_raw = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "")
+if sa_raw:
+    try:
+        sa = json.loads(sa_raw)
+        log(PASS, "ServiceAccount", f"JSON valid | client_email={sa.get('client_email')}")
+    except Exception as e:
+        log(FAIL, "ServiceAccount", f"JSON parse error: {e}")
+else:
+    log(WARN, "ServiceAccount", "GOOGLE_SERVICE_ACCOUNT_JSON env var is empty — falling back to OAuth2 token")
+
 raw = os.environ.get("GOOGLE_TOKEN_JSON", "")
 if not raw:
-    log(FAIL, "Token", "GOOGLE_TOKEN_JSON env var is empty")
+    log(WARN if sa_raw else FAIL, "Token", "GOOGLE_TOKEN_JSON env var is empty")
 else:
     try:
         td = json.loads(raw)
