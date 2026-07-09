@@ -68,13 +68,23 @@ TOKEN_PATH = os.path.join(_API_DIR, ".google-token.json")
 # ── Google Drive helpers ──────────────────────────────────────────────────────
 
 def _credentials():
-    """Return authenticated OAuth2 user credentials (Drive/Sheets scope).
+    """Return authenticated Google credentials (Drive/Sheets scope).
 
-    Token source priority:
-      1. GOOGLE_TOKEN_JSON env var (Railway / production)
-      2. .google-token.json file (local dev)
+    Credential source priority:
+      1. GOOGLE_SERVICE_ACCOUNT_JSON env var (Railway / production) — service
+         account, doesn't expire and doesn't need re-auth
+      2. GOOGLE_TOKEN_JSON env var — legacy OAuth2 user token
+      3. .google-token.json file (local dev, legacy OAuth2 user token)
     """
     import json
+
+    sa_raw = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "")
+    if sa_raw:
+        sa_info = json.loads(sa_raw)
+        return service_account.Credentials.from_service_account_info(
+            sa_info, scopes=SCOPES
+        )
+
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
 
@@ -109,7 +119,7 @@ def _credentials():
 
 
 def _drive():
-    """Return an authenticated Drive service using OAuth2 user credentials."""
+    """Return an authenticated Drive service (service account or OAuth2 user credentials)."""
     return build("drive", "v3", credentials=_credentials(), cache_discovery=False)
 
 
