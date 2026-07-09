@@ -71,20 +71,17 @@ def _credentials():
     """Return authenticated Google credentials (Drive/Sheets scope).
 
     Credential source priority:
-      1. GOOGLE_SERVICE_ACCOUNT_JSON env var (Railway / production) — service
-         account, doesn't expire and doesn't need re-auth
-      2. GOOGLE_TOKEN_JSON env var — legacy OAuth2 user token
-      3. .google-token.json file (local dev, legacy OAuth2 user token)
+      1. GOOGLE_TOKEN_JSON env var (Railway / production) — OAuth2 user token
+         for cami.english2010@gmail.com, the actual owner of the Drive
+         folders and the only credential with real storage quota on them
+      2. .google-token.json file (local dev)
+      3. GOOGLE_SERVICE_ACCOUNT_JSON env var — fallback only when no OAuth2
+         token is configured at all. NOTE: service accounts have no storage
+         quota on a personal Gmail Drive, so this can authenticate and read
+         but cannot upload new files — it exists only so read-only checks
+         (e.g. healthcheck.py) still run somewhere with no OAuth2 token set.
     """
     import json
-
-    sa_raw = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "")
-    if sa_raw:
-        sa_info = json.loads(sa_raw)
-        return service_account.Credentials.from_service_account_info(
-            sa_info, scopes=SCOPES
-        )
-
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
 
@@ -95,6 +92,11 @@ def _credentials():
         with open(TOKEN_PATH) as f:
             td = json.load(f)
     else:
+        sa_raw = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "")
+        if sa_raw:
+            return service_account.Credentials.from_service_account_info(
+                json.loads(sa_raw), scopes=SCOPES
+            )
         raise RuntimeError(
             "No Google Drive credentials found. "
             "Set GOOGLE_TOKEN_JSON env var or run setup_drive_auth.py locally."
