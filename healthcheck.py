@@ -28,19 +28,11 @@ def log(status, section, msg):
 
 # ── 1. GOOGLE CREDENTIALS ────────────────────────────────────────────────────
 print("\n=== 1. GOOGLE CREDENTIALS ===")
-sa_raw = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "")
-if sa_raw:
-    try:
-        sa = json.loads(sa_raw)
-        log(PASS, "ServiceAccount", f"JSON valid | client_email={sa.get('client_email')}")
-    except Exception as e:
-        log(FAIL, "ServiceAccount", f"JSON parse error: {e}")
-else:
-    log(WARN, "ServiceAccount", "GOOGLE_SERVICE_ACCOUNT_JSON env var is empty — falling back to OAuth2 token")
-
 raw = os.environ.get("GOOGLE_TOKEN_JSON", "")
+sa_raw = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "")
+
 if not raw:
-    log(WARN if sa_raw else FAIL, "Token", "GOOGLE_TOKEN_JSON env var is empty")
+    log(WARN if sa_raw else FAIL, "Token", "GOOGLE_TOKEN_JSON env var is empty (this is the primary credential — needed for uploads)")
 else:
     try:
         td = json.loads(raw)
@@ -52,6 +44,9 @@ else:
             log(WARN, "Token", "Scope is drive.file (restricted) — upgrade to drive scope recommended")
     except Exception as e:
         log(FAIL, "Token", f"JSON parse error: {e}")
+
+if sa_raw:
+    log(WARN, "ServiceAccount", "GOOGLE_SERVICE_ACCOUNT_JSON is set — used only as a fallback if no OAuth2 token is present. It can read Drive but CANNOT upload (no storage quota on a personal Gmail Drive).")
 
 
 # ── 2. DRIVE AUTH ────────────────────────────────────────────────────────────
