@@ -1,3 +1,4 @@
+import sys
 import environ
 from pathlib import Path
 from datetime import timedelta
@@ -6,6 +7,11 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 env = environ.Env()
 environ.Env.read_env(BASE_DIR / ".env")
+
+# True whenever the Django test runner is driving the process — used to hard-block
+# any code path that would otherwise make a real external call (e.g. Google Sheets
+# logging) if a test forgets to mock it, instead of silently hitting production.
+TESTING = "test" in sys.argv
 
 SECRET_KEY = env("DJANGO_SECRET_KEY")
 DEBUG = env.bool("DEBUG", default=False)

@@ -3,9 +3,13 @@
 matching.py tests are pure functions — no DB access. The API/view tests use
 Django's TestCase (isolated per-test database, created and destroyed
 automatically — never touches dev or production data) and mock every
-external call (Drive upload, email) so running these can never trigger a
-real invoice generation or send a real email.
+external call (Drive upload, email, Sheets logging) so running these can
+never trigger a real invoice generation, send a real email, or write to the
+real production Google Sheet. sheets_log.log_emision/log_anulacion also have
+a hard runtime guard (config.settings.TESTING) that raises if a future test
+ever reaches them unmocked, instead of silently hitting production.
 """
+import os
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -216,9 +220,10 @@ class DraftCompletionFlowTests(TestCase):
         self.assertEqual(row["sugerencia_alumno"]["id"], tere.id)
         self.assertEqual(row["sugerencia_alumno"]["score"], 1.0)
 
+    @patch("modules.documentos.sheets_log.log_emision")
     @patch("modules.pagos.views._send_payment_email")
     @patch("modules.documentos.invoice_service.generate_invoice_for_pago")
-    def test_patch_completes_draft_and_calls_generation_exactly_once(self, mock_generate, mock_email):
+    def test_patch_completes_draft_and_calls_generation_exactly_once(self, mock_generate, mock_email, mock_log_emision):
         mock_generate.return_value = ("CC252-26", "fake-drive-id")
 
         resp = self.client.patch(
@@ -327,15 +332,18 @@ class DraftCompletionFlowTests(TestCase):
         self.assertIsNone(manual_row["sugerencia_pagador"])
 
     @override_settings(RESEND_API_KEY="test_key_for_pipeline_check")
+    @patch.dict(os.environ, {"EMAIL_SENDING_ENABLED": "true"})
+    @patch("modules.documentos.sheets_log.log_emision")
     @patch("resend.Emails.send")
     @patch("modules.documentos.invoice_service.upload_to_drive")
-    def test_full_pipeline_end_to_end_with_mocked_external_calls(self, mock_upload, mock_resend_send):
+    def test_full_pipeline_end_to_end_with_mocked_external_calls(self, mock_upload, mock_resend_send, mock_log_emision):
         """Create -> appear in batch review -> complete via the exact same PATCH
         the review screen's Save button issues -> real number allocation, real
-        PDF generation, real email-content building -- only the two actual
-        network calls (Drive upload, Resend send) are intercepted. Prints the
-        exact captured payloads so they can be eyeballed before doing this for
-        real on a production row.
+        PDF generation, real email-content building -- only the three actual
+        network calls (Drive upload, Resend send, Sheets log) are intercepted.
+        EMAIL_SENDING_ENABLED is force-enabled for this test only, since it's
+        specifically verifying the resend call gets made; the kill switch
+        defaults to off everywhere else.
         """
         mock_upload.return_value = "FAKE_DRIVE_FILE_ID_FOR_TEST"
 
