@@ -1,10 +1,14 @@
 """
 Generate invoices for Pago records that have no linked Documento.
-Runs automatically in the Railway release phase after seed_emisores.
+
+Manual-only — deliberately NOT wired into the Procfile's deploy chain. It
+doesn't check estado_carga, so a mid-completion or otherwise-not-ready Pago
+that already has emisor+alumno+pagador set would get silently, permanently
+invoiced the moment this runs. Always review with --dry-run first.
 
 Usage:
+    python manage.py fix_missing_invoices --dry-run  # report only, run this first
     python manage.py fix_missing_invoices            # generate + report
-    python manage.py fix_missing_invoices --dry-run  # report only
 """
 from datetime import date
 
