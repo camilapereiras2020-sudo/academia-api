@@ -10,7 +10,7 @@ from googleapiclient.discovery import build
 from .invoice_service import _credentials
 
 SPREADSHEET_ID = os.environ.get(
-    "GOOGLE_SHEETS_SPREADSHEET_ID", "1X--yaqqs9GgsbG-gA03HS42qCpspc9l_y8kZiV0ooKs"
+    "GOOGLE_SHEETS_SPREADSHEET_ID", "1fCmLq9Ff7CO1ikd-ZGKgGvxzvGzbuSzC_IZ3-9WKIZA"
 )
 
 
