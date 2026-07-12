@@ -90,3 +90,32 @@ def log_anulacion(documento) -> None:
             documento.anulada_at.strftime("%d/%m/%Y %H:%M") if documento.anulada_at else "",
         ]]},
     ).execute()
+
+
+def log_reactivacion(documento) -> None:
+    """Reverse of log_anulacion — clears the Anulada/motivo/fecha columns for
+    a document that was voided by mistake and has been reactivated.
+    """
+    _block_if_untested_in_tests()
+    tab     = _tab_for(documento.tipo)
+    service = _sheets()
+
+    result = service.spreadsheets().values().get(
+        spreadsheetId=SPREADSHEET_ID, range=f"{tab}!B2:B10000",
+    ).execute()
+
+    row_index = None
+    for i, r in enumerate(result.get("values", [])):
+        if r and r[0] == documento.num_doc:
+            row_index = i + 2
+            break
+
+    if row_index is None:
+        log_emision(documento)
+        return
+
+    service.spreadsheets().values().update(
+        spreadsheetId=SPREADSHEET_ID, range=f"{tab}!H{row_index}:J{row_index}",
+        valueInputOption="RAW",
+        body={"values": [["Emitida", "", ""]]},
+    ).execute()
