@@ -31,7 +31,6 @@ class DocumentoViewSet(ModelViewSet):
         from .invoice_service import generate_invoice_for_pago
 
         pago_id = request.data.get("pago_id")
-        tipo    = request.data.get("tipo", "factura")
 
         if not pago_id:
             return Response({"error": "pago_id es obligatorio"}, status=status.HTTP_400_BAD_REQUEST)
@@ -43,8 +42,15 @@ class DocumentoViewSet(ModelViewSet):
         except Pago.DoesNotExist:
             return Response({"error": "Pago no encontrado"}, status=status.HTTP_404_NOT_FOUND)
 
+        # Idempotent: a non-borrador Documento already means this pago's real
+        # invoice/receipt exists — return it instead of minting a new num_doc
+        # (double-click, retry-after-partial-failure, etc. must not duplicate).
+        existing = pago.documentos.filter(estado="emitida").order_by("-created_at").first()
+        if existing:
+            return Response(DocumentoSerializer(existing).data, status=status.HTTP_200_OK)
+
         try:
-            num_doc, drive_id = generate_invoice_for_pago(pago, tipo)
+            num_doc, drive_id, tipo = generate_invoice_for_pago(pago)
         except ValueError as e:
             # incomplete/misconfigured pago — a predictable client error, not a server fault
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)

@@ -16,6 +16,8 @@ CAMIANDCO = dict(
     recibo_prefix    = "RE",
     factura_baseline = 236,
     recibo_baseline  = 236,
+    recibo_efectivo_suffix   = "C",
+    recibo_efectivo_baseline = 199,
     drive_folder_id  = "1W3Jt5XMelFeUa_W4Gr8r381R4Gaz1imn",
     activo           = True,
 )
@@ -33,6 +35,8 @@ RANGERS = dict(
     recibo_prefix    = "RR",
     factura_baseline = 0,
     recibo_baseline  = 0,
+    recibo_efectivo_suffix   = "R",
+    recibo_efectivo_baseline = 299,
     drive_folder_id  = "17xDVHjzwsvaRIVhSiNAVLlFeNF-d7tF-",
     activo           = True,
 )

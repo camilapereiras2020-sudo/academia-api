@@ -3,7 +3,12 @@ from django.contrib.auth import get_user_model
 
 User = get_user_model()
 
-TIPO_CHOICES = [("factura", "Factura"), ("recibo", "Recibo"), ("otro", "Otro")]
+TIPO_CHOICES = [
+    ("factura", "Factura"),
+    ("recibo", "Recibo"),
+    ("recibo_efectivo", "Recibo (efectivo)"),
+    ("otro", "Otro"),
+]
 
 ESTADO_CHOICES = [
     ("borrador", "Borrador"),
@@ -28,6 +33,10 @@ class Emisor(models.Model):
     recibo_prefix    = models.CharField(max_length=10, default="RE")
     factura_baseline = models.IntegerField(default=0)
     recibo_baseline  = models.IntegerField(default=0)
+    # Cash ("efectivo") receipts get their own sequence, isolated from the
+    # RE/RR recibo bucket: NUMBER + suffix, no year suffix (e.g. "200C").
+    recibo_efectivo_suffix   = models.CharField(max_length=5, blank=True, default="")
+    recibo_efectivo_baseline = models.IntegerField(default=0)
     drive_folder_id  = models.CharField(max_length=200, blank=True)
     activo           = models.BooleanField(default=True)
     created_at       = models.DateTimeField(auto_now_add=True)

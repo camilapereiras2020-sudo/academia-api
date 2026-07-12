@@ -18,7 +18,7 @@ from django.utils import timezone
 from modules.documentos.models import Documento, Emisor
 from modules.documentos.invoice_service import generate_invoice_for_pago
 from modules.pagos.models import Pago
-from modules.pagos.constants import METODOS_FACTURA
+from modules.pagos.constants import tipo_doc_for_metodo
 
 
 class Command(BaseCommand):
@@ -70,8 +70,7 @@ class Command(BaseCommand):
                 skipped += 1
                 continue
 
-            metodo = (pago.metodo or "").lower()
-            tipo   = "factura" if metodo in METODOS_FACTURA else "recibo"
+            tipo = tipo_doc_for_metodo(pago.metodo)
 
             try:
                 if dry:
@@ -82,7 +81,7 @@ class Command(BaseCommand):
                     ok += 1
                     continue
 
-                num_doc, drive_id = generate_invoice_for_pago(pago, tipo)
+                num_doc, drive_id, tipo = generate_invoice_for_pago(pago)
                 Documento.objects.create(
                     academia   = pago.academia,
                     pago       = pago,

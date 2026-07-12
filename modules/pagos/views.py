@@ -5,7 +5,6 @@ from rest_framework.viewsets import ModelViewSet
 from django.utils import timezone
 from .models import Pago
 from .serializers import PagoSerializer
-from .constants import METODOS_FACTURA
 
 
 def _send_payment_email(pago, num_doc, emisor_nombre="Cami&Co"):
@@ -96,11 +95,18 @@ def _issue_invoice(pago):
         print(f"[invoice] no emisor found for pago {pago.id} — skipping PDF generation")
         return
 
+    from modules.documentos.models import Documento
+    if pago.documentos.exclude(estado="borrador").exists():
+        # A non-borrador Documento already exists for this pago — never
+        # allocate a second num_doc for the same real-world payment. Editing
+        # a pago (status, grupo, etc.) after its invoice was already issued
+        # must not regenerate one.
+        print(f"[invoice] pago {pago.id} already has an issued documento — skipping regeneration")
+        return
+
     try:
         from modules.documentos.invoice_service import generate_invoice_for_pago
-        from modules.documentos.models import Documento
-        tipo = "factura" if pago.metodo.lower() in METODOS_FACTURA else "recibo"
-        num_doc, drive_id = generate_invoice_for_pago(pago, tipo)
+        num_doc, drive_id, tipo = generate_invoice_for_pago(pago)
         doc = Documento.objects.create(
             academia   = pago.academia,
             pago       = pago,
