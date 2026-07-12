@@ -56,7 +56,7 @@ MESES_ES = {
     9: "septiembre", 10: "octubre", 11: "noviembre", 12: "diciembre",
 }
 
-from modules.pagos.constants import METODOS_FACTURA
+from modules.pagos.constants import tipo_doc_for_metodo
 
 SCOPES = ["https://www.googleapis.com/auth/drive"]
 
@@ -191,39 +191,56 @@ def delete_drive_file(file_id: str) -> None:
 # ── Invoice numbering ─────────────────────────────────────────────────────────
 
 def _next_invoice_number(emisor, tipo: str) -> str:
-    """Determine next doc number for this emisor+tipo by scanning DB."""
+    """Determine next doc number for this emisor+tipo by scanning DB.
+
+    "factura"/"recibo" use a letter prefix + year suffix (e.g. "CC236-26").
+    "recibo_efectivo" is a separate, isolated sequence: no letter prefix, a
+    fixed per-emisor letter suffix instead of the year (e.g. "200C") — see
+    Emisor.recibo_efectivo_suffix/_baseline.
+    """
     from modules.documentos.models import Documento
     from modules.pagos.models import Pago
 
-    prefix   = emisor.factura_prefix if tipo == "factura" else emisor.recibo_prefix
-    baseline = emisor.factura_baseline if tipo == "factura" else emisor.recibo_baseline
+    if tipo == "recibo_efectivo":
+        prefix   = ""
+        baseline = emisor.recibo_efectivo_baseline
+        suffix   = emisor.recibo_efectivo_suffix
+        if not suffix:
+            # An empty prefix + empty suffix would match every existing
+            # num_doc (startswith/endswith "" matches everything), silently
+            # merging this "isolated" sequence with CC/RE/RA/RR. Fail loud
+            # instead of a misconfigured Emisor corrupting the count.
+            raise ValueError(f"Emisor {emisor.slug!r} has no recibo_efectivo_suffix configured.")
+    elif tipo == "factura":
+        prefix   = emisor.factura_prefix
+        baseline = emisor.factura_baseline
+        suffix   = f"-{str(date.today().year)[2:]}"
+    else:
+        prefix   = emisor.recibo_prefix
+        baseline = emisor.recibo_baseline
+        suffix   = f"-{str(date.today().year)[2:]}"
 
-    year_short = str(date.today().year)[2:]
-    suffix     = f"-{year_short}"
-    max_num    = baseline
+    max_num = baseline
+
+    def _filters(field):
+        f = {f"{field}__endswith": suffix}
+        if prefix:
+            f[f"{field}__startswith"] = prefix
+        return f
 
     for qs in (
-        Documento.objects.filter(
-            academia=emisor.academia,
-            num_doc__startswith=prefix,
-            num_doc__endswith=suffix,
-        ).values_list("num_doc", flat=True),
-        Pago.objects.filter(
-            academia=emisor.academia,
-            num_doc__startswith=prefix,
-            num_doc__endswith=suffix,
-        ).values_list("num_doc", flat=True),
+        Documento.objects.filter(academia=emisor.academia, **_filters("num_doc"))
+            .values_list("num_doc", flat=True),
+        Pago.objects.filter(academia=emisor.academia, **_filters("num_doc"))
+            .values_list("num_doc", flat=True),
         # numbers already reserved for a not-yet-completed draft Pago (bulk
         # import) must also block reuse, even though they haven't been issued
-        Pago.objects.filter(
-            academia=emisor.academia,
-            numero_factura_reservado__startswith=prefix,
-            numero_factura_reservado__endswith=suffix,
-        ).values_list("numero_factura_reservado", flat=True),
+        Pago.objects.filter(academia=emisor.academia, **_filters("numero_factura_reservado"))
+            .values_list("numero_factura_reservado", flat=True),
     ):
         for num_doc in qs:
             try:
-                middle  = num_doc[len(prefix) : -len(suffix)]
+                middle  = num_doc[len(prefix) : -len(suffix)] if suffix else num_doc[len(prefix):]
                 max_num = max(max_num, int(middle))
             except (ValueError, IndexError):
                 pass
@@ -518,7 +535,10 @@ def generate_pdf_bytes(
 
 def generate_invoice_for_pago(pago, tipo="factura"):
     """Generate PDF for a Pago using its Emisor, upload to Drive.
-    Returns (num_doc, drive_file_id).
+    Returns (num_doc, drive_file_id, tipo_doc). tipo_doc is the authoritative
+    bucket ("factura"/"recibo"/"recibo_efectivo") derived from pago.metodo —
+    callers should store *this* on the Documento, not their own guess (the
+    `tipo` param above is legacy and not used for numbering).
     """
     if pago.estado_carga == "pendiente_completar" or not pago.alumno_id or not pago.pagador_id:
         raise ValueError(
@@ -537,8 +557,7 @@ def generate_invoice_for_pago(pago, tipo="factura"):
     extras  = pago.extras or []
     metodo  = pago.metodo or ""
 
-    es_fac   = metodo.lower() in METODOS_FACTURA if metodo else True
-    tipo_doc = "factura" if es_fac else "recibo"
+    tipo_doc = tipo_doc_for_metodo(metodo)
     # A bulk-imported draft may already carry a pre-assigned number (e.g. from
     # an external Bizum/TaxFix reconciliation) — honor it instead of
     # allocating a new one.
@@ -583,7 +602,7 @@ def generate_invoice_for_pago(pago, tipo="factura"):
     folder_id = emisor.drive_folder_id or os.environ.get("GOOGLE_DRIVE_FOLDER_ID") or ""
     drive_id  = upload_to_drive(pdf_bytes, f"{num_doc}.pdf", fecha.year, fecha.month, folder_id)
 
-    return num_doc, drive_id
+    return num_doc, drive_id, tipo_doc
 
 
 def regenerate_anulada_pdf(documento) -> str:

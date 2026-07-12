@@ -171,11 +171,12 @@ if broken_docs or orphan_pagos:
             log(FAIL, f"Fix:{d.id}", f"{d.nombre} — pago has no emisor, cannot regenerate")
             continue
         try:
-            num_doc, drive_id = generate_invoice_for_pago(pago, d.tipo)
+            num_doc, drive_id, tipo = generate_invoice_for_pago(pago)
+            d.tipo     = tipo
             d.s3_key   = drive_id
             d.num_doc  = num_doc
             d.nombre   = f"{num_doc}.pdf"
-            d.save(update_fields=["s3_key", "num_doc", "nombre"])
+            d.save(update_fields=["tipo", "s3_key", "num_doc", "nombre"])
             pago.num_doc = num_doc
             pago.save(update_fields=["num_doc"])
             log(PASS, f"Fix:{d.id}", f"Regenerated → {num_doc} (drive={drive_id})")
@@ -197,9 +198,7 @@ if broken_docs or orphan_pagos:
         # Re-fetch with full select_related
         p = Pago.objects.select_related("emisor", "pagador", "alumno", "grupo").get(id=p.id)
         try:
-            from modules.pagos.constants import METODOS_FACTURA
-            tipo = "factura" if (p.metodo or "").lower() in METODOS_FACTURA else "recibo"
-            num_doc, drive_id = generate_invoice_for_pago(p, tipo)
+            num_doc, drive_id, tipo = generate_invoice_for_pago(p)
             from datetime import date
             Documento.objects.update_or_create(
                 pago=p,
@@ -282,11 +281,11 @@ def run_e2e_test(emisor_slug, label):
 
     # Generate invoice
     try:
-        num_doc, drive_id = generate_invoice_for_pago(pago, "factura")
+        num_doc, drive_id, tipo = generate_invoice_for_pago(pago)
         Documento.objects.create(
             academia   = academia,
             pago       = pago,
-            tipo       = "factura",
+            tipo       = tipo,
             nombre     = f"{num_doc}.pdf",
             num_doc    = num_doc,
             s3_key     = drive_id,
