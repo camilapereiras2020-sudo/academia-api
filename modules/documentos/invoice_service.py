@@ -605,10 +605,11 @@ def generate_invoice_for_pago(pago, tipo="factura"):
     return num_doc, drive_id, tipo_doc
 
 
-def regenerate_anulada_pdf(documento) -> str:
-    """Re-render a Documento's PDF with an ANULADA watermark and move it to the
-    Anuladas subfolder in Drive. Reuses the existing num_doc — does not
-    consume a new invoice number. Returns the new Drive file id.
+def _rerender_documento_pdf(documento, watermark: str = None, subfolder: str = None) -> str:
+    """Shared by regenerate_anulada_pdf/reactivar_documento: re-render a
+    Documento's PDF (reusing its existing num_doc — never consumes a new
+    invoice number) and move it in Drive, deleting the old file. Returns the
+    new Drive file id.
     """
     pago = documento.pago
     if pago is None:
@@ -651,19 +652,36 @@ def regenerate_anulada_pdf(documento) -> str:
         fecha           = fecha,
         tipo            = documento.tipo,
         theme           = theme,
-        watermark       = "ANULADA",
+        watermark       = watermark,
     )
 
     folder_id = emisor.drive_folder_id or os.environ.get("GOOGLE_DRIVE_FOLDER_ID") or ""
     new_id = upload_to_drive(
         pdf_bytes, f"{documento.num_doc}.pdf",
-        fecha.year, fecha.month, folder_id, subfolder="Anuladas",
+        fecha.year, fecha.month, folder_id, subfolder=subfolder,
     )
 
     if documento.s3_key:
         try:
             delete_drive_file(documento.s3_key)
         except Exception as e:
-            print(f"[anular] could not remove original Drive file {documento.s3_key}: {e}")
+            print(f"[rerender] could not remove old Drive file {documento.s3_key}: {e}")
 
     return new_id
+
+
+def regenerate_anulada_pdf(documento) -> str:
+    """Re-render a Documento's PDF with an ANULADA watermark and move it to the
+    Anuladas subfolder in Drive. Reuses the existing num_doc — does not
+    consume a new invoice number. Returns the new Drive file id.
+    """
+    return _rerender_documento_pdf(documento, watermark="ANULADA", subfolder="Anuladas")
+
+
+def reactivar_documento(documento) -> str:
+    """Reverse of regenerate_anulada_pdf: re-render the PDF without the
+    ANULADA watermark and move it back to the normal (non-Anuladas) Drive
+    folder. For correcting a wrongly-voided document — the caller is
+    responsible for resetting estado/anulada_at/motivo_anulacion afterward.
+    """
+    return _rerender_documento_pdf(documento, watermark=None, subfolder=None)
