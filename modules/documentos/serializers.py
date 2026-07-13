@@ -28,5 +28,6 @@ class DocumentoSerializer(serializers.ModelSerializer):
                 "pagador": obj.pago.pagador.nombre if obj.pago.pagador else None,
                 "periodo": obj.pago.periodo,
                 "total": str(obj.pago.total),
+                "fecha": obj.pago.fecha.isoformat() if obj.pago.fecha else None,
             }
         return None
