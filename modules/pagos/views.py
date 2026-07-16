@@ -275,6 +275,12 @@ class PagoViewSet(ModelViewSet):
                 {"error": "Este pago tiene documentos emitidos: anúlalos en vez de eliminar el pago."},
                 status=status.HTTP_409_CONFLICT,
             )
+        # Documento.pago is on_delete=PROTECT now (an issued Documento must
+        # never cascade-delete) — but a lingering borrador Documento (never
+        # actually issued, no Drive/local file) is meant to be freely
+        # discardable along with its draft Pago, so it's cleaned up
+        # explicitly here rather than relying on cascade.
+        pago.documentos.filter(estado="borrador").delete()
         return super().destroy(request, *args, **kwargs)
 
     @action(detail=True, methods=["post"], url_path="anular")
