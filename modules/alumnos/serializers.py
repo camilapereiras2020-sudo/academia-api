@@ -1,9 +1,14 @@
 
 from rest_framework import serializers
 from .models import Alumno
+from modules.core.mixins import TenantScopedFKMixin
+from modules.grupos.models import Grupo
+from modules.pagadores.models import Pagador
+from modules.empresas.models import Empresa
 
 
-class AlumnoSerializer(serializers.ModelSerializer):
+class AlumnoSerializer(TenantScopedFKMixin, serializers.ModelSerializer):
+    tenant_scoped_fields = {"grupo": Grupo, "pagador": Pagador, "empresa": Empresa}
     pagador_nombre = serializers.CharField(source="pagador.nombre", read_only=True, default="")
     grupo_nombre = serializers.CharField(source="grupo.nombre", read_only=True, default="")
     empresa_nombre = serializers.CharField(source="empresa.nombre", read_only=True, default="")

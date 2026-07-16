@@ -58,7 +58,24 @@ class AlumnoViewSet(ModelViewSet):
         # out of her "contacto básico" scope.
         if self.request.user.role == "reception":
             raise PermissionDenied("No tenés permiso para crear alumnos nuevos.")
-        serializer.save(academia=self.request.user.tenant)
+        scope = marca_scope_for(self.request.user)
+        if scope:
+            provided = serializer.validated_data.get("marca")
+            if provided and provided != scope:
+                raise PermissionDenied(f"Solo podés crear alumnos de la marca {scope}.")
+            serializer.save(academia=self.request.user.tenant, marca=scope)
+        else:
+            serializer.save(academia=self.request.user.tenant)
+
+    def perform_update(self, serializer):
+        scope = marca_scope_for(self.request.user)
+        if scope:
+            provided = serializer.validated_data.get("marca")
+            if provided and provided != scope:
+                raise PermissionDenied(f"Solo podés editar alumnos de la marca {scope}.")
+            serializer.save(marca=scope)
+        else:
+            serializer.save()
 
     def perform_destroy(self, instance):
         if self.request.user.role == "reception":

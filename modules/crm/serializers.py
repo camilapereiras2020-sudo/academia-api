@@ -1,8 +1,11 @@
 from rest_framework import serializers
 from .models import Lead, Interaccion
+from modules.core.mixins import TenantScopedFKMixin
 
 
-class InteraccionSerializer(serializers.ModelSerializer):
+class InteraccionSerializer(TenantScopedFKMixin, serializers.ModelSerializer):
+    tenant_scoped_fields = {"lead": Lead}
+
     class Meta:
         model = Interaccion
         fields = ["id", "lead", "tipo", "fecha", "resumen", "proxima_accion"]
@@ -29,7 +32,11 @@ class LeadSerializer(serializers.ModelSerializer):
             "proximo_seguimiento", "alumno", "horas_sin_mover", "alerta",
             "interacciones", "created_at", "updated_at",
         ]
-        read_only_fields = ["id", "created_at", "updated_at"]
+        # alumno is deliberately read-only here: it's only ever set via the
+        # convertir_alumno action, which also creates the Pagador and flips
+        # etapa atomically — allowing a direct PATCH would bypass all of
+        # that and could link the lead to another tenant/marca's alumno.
+        read_only_fields = ["id", "created_at", "updated_at", "alumno"]
         extra_kwargs = {
             "telefono": {"required": False, "allow_blank": True},
             "objetivo": {"required": False},

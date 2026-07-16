@@ -2,6 +2,7 @@ import logging
 
 from rest_framework import permissions, status
 from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 from django.db.models import Count, Q
@@ -33,11 +34,28 @@ class LeadViewSet(ModelViewSet):
         return qs
 
     def perform_create(self, serializer):
-        lead = serializer.save(academia=self.request.user.tenant)
+        scope = marca_scope_for(self.request.user)
+        if scope:
+            provided = serializer.validated_data.get("marca")
+            if provided and provided != scope:
+                raise PermissionDenied(f"Solo podés crear leads de la marca {scope}.")
+            lead = serializer.save(academia=self.request.user.tenant, marca=scope)
+        else:
+            lead = serializer.save(academia=self.request.user.tenant)
         try:
             append_contacto_row(lead)
         except Exception:
             logger.exception("Failed to append lead %s to Contactos sheet", lead.id)
+
+    def perform_update(self, serializer):
+        scope = marca_scope_for(self.request.user)
+        if scope:
+            provided = serializer.validated_data.get("marca")
+            if provided and provided != scope:
+                raise PermissionDenied(f"Solo podés editar leads de la marca {scope}.")
+            serializer.save(marca=scope)
+        else:
+            serializer.save()
 
     @action(detail=False, methods=["get"], url_path="dashboard")
     def dashboard(self, request):
@@ -94,6 +112,7 @@ class LeadViewSet(ModelViewSet):
     def convertir_alumno(self, request, pk=None):
         from modules.alumnos.models import Alumno
         from modules.pagadores.models import Pagador
+        from modules.grupos.models import Grupo
 
         lead = self.get_object()
 
@@ -110,6 +129,17 @@ class LeadViewSet(ModelViewSet):
         if not all([grupo_id, mensualidad, fecha_inicio]):
             return Response(
                 {"error": "grupo_id, mensualidad y fecha_inicio son obligatorios"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # grupo_id comes straight from the request — without this, a lead
+        # could get matriculated into another tenant's group, or a group of
+        # the wrong marca for this lead.
+        try:
+            grupo = Grupo.objects.get(id=grupo_id, academia=request.user.tenant, marca=lead.marca)
+        except Grupo.DoesNotExist:
+            return Response(
+                {"error": "Grupo no encontrado para esta marca."},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
@@ -132,7 +162,7 @@ class LeadViewSet(ModelViewSet):
             nombre=lead.nombre_alumno,
             marca=lead.marca,
             pagador=pagador,
-            grupo_id=grupo_id,
+            grupo=grupo,
             nivel=lead.nivel_estimado or "",
             notas=lead.notas or "",
         )

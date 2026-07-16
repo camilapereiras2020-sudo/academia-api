@@ -1,8 +1,11 @@
 
 from rest_framework import serializers
 from .models import Empresa, ContactoEmpresa
+from modules.core.mixins import TenantScopedFKMixin
 
-class ContactoEmpresaSerializer(serializers.ModelSerializer):
+class ContactoEmpresaSerializer(TenantScopedFKMixin, serializers.ModelSerializer):
+    tenant_scoped_fields = {"empresa": Empresa}
+
     class Meta:
         model = ContactoEmpresa
         fields = ["id", "empresa", "nombre", "cargo", "email", "telefono", "notas", "created_at"]

@@ -1,8 +1,14 @@
 from rest_framework import serializers
 from .models import Pago
-from modules.tarifas.models import MARCA_CHOICES
+from modules.tarifas.models import MARCA_CHOICES, Tarifa
+from modules.core.mixins import TenantScopedFKMixin
+from modules.alumnos.models import Alumno
+from modules.pagadores.models import Pagador
+from modules.grupos.models import Grupo
 
-class PagoSerializer(serializers.ModelSerializer):
+class PagoSerializer(TenantScopedFKMixin, serializers.ModelSerializer):
+    tenant_scoped_fields = {"alumno": Alumno, "pagador": Pagador, "grupo": Grupo, "tarifa": Tarifa}
+
     # Required on create despite the model's default="rangers_academy" —
     # that default exists only so internal scripts (healthcheck.py etc.)
     # don't need to care about it; a real Pago must have an explicit,
