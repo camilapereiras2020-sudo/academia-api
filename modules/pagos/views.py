@@ -1,3 +1,5 @@
+import logging
+
 from rest_framework import permissions, status
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied
@@ -8,6 +10,8 @@ from modules.authentication.rbac import NotReception, marca_scope_for
 from .models import Pago
 from .serializers import PagoSerializer
 
+logger = logging.getLogger(__name__)
+
 
 def _send_payment_email(pago, num_doc, emisor_nombre="Cami&Co"):
     from django.conf import settings
@@ -15,7 +19,7 @@ def _send_payment_email(pago, num_doc, emisor_nombre="Cami&Co"):
     import resend
 
     if os.environ.get("EMAIL_SENDING_ENABLED", "false").lower() != "true":
-        print(f"[email] EMAIL_SENDING_ENABLED is off — skipping email for pago {pago.id}")
+        logger.info("EMAIL_SENDING_ENABLED is off — skipping payment email for pago %s", pago.id)
         return
 
     if not pago.alumno or not pago.pagador:
@@ -23,7 +27,11 @@ def _send_payment_email(pago, num_doc, emisor_nombre="Cami&Co"):
 
     email   = getattr(pago.pagador, "email", "") or ""
     api_key = getattr(settings, "RESEND_API_KEY", "") or ""
-    if not email or not api_key or api_key == "re_placeholder":
+    if not email:
+        logger.warning("Pago %s: pagador has no email on file — payment confirmation not sent", pago.id)
+        return
+    if not api_key or api_key == "re_placeholder":
+        logger.error("RESEND_API_KEY is missing/placeholder — payment confirmation for pago %s not sent", pago.id)
         return
 
     resend.api_key     = api_key
@@ -104,7 +112,7 @@ def _issue_invoice(pago):
     perform_update's draft-completion path (bulk-imported pagos).
     """
     if not pago.emisor:
-        print(f"[invoice] no emisor found for pago {pago.id} — skipping PDF generation")
+        logger.error("No emisor found for pago %s — skipping invoice generation", pago.id)
         return
 
     from modules.documentos.models import Documento
@@ -113,7 +121,7 @@ def _issue_invoice(pago):
         # allocate a second num_doc for the same real-world payment. Editing
         # a pago (status, grupo, etc.) after its invoice was already issued
         # must not regenerate one.
-        print(f"[invoice] pago {pago.id} already has an issued documento — skipping regeneration")
+        logger.info("Pago %s already has an issued documento — skipping regeneration", pago.id)
         return
 
     try:
@@ -135,16 +143,16 @@ def _issue_invoice(pago):
         pago.save(update_fields=["num_doc"])
         try:
             _send_payment_email(pago, num_doc, pago.emisor.nombre)
-        except Exception as e:
-            print(f"[email] notification failed for pago {pago.id}: {e}")
+        except Exception:
+            logger.exception("Payment confirmation email failed for pago %s", pago.id)
         try:
             from modules.documentos.sheets_log import log_emision
             log_emision(doc)
-        except Exception as e:
-            print(f"[invoice] sheet log failed (non-critical): {e}")
+        except Exception:
+            logger.exception("Sheet log failed for pago %s (non-critical)", pago.id)
     except Exception as e:
         err = str(e)
-        print(f"[invoice] auto-generate failed for pago {pago.id}: {err}")
+        logger.exception("Invoice auto-generation failed for pago %s", pago.id)
         note = f"⚠ Factura no generada: {err}"
         pago.notas = ((pago.notas or "") + "\n" + note).strip()
         pago.save(update_fields=["notas"])
