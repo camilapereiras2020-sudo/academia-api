@@ -6,6 +6,7 @@ from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 from django.db.models import Count, Q
 from django.utils import timezone
+from modules.authentication.rbac import NotReception, marca_scope_for
 from .models import Lead, Interaccion
 from .serializers import LeadSerializer, LeadListSerializer, InteraccionSerializer
 from .sheets_service import append_contacto_row
@@ -14,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 class LeadViewSet(ModelViewSet):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, NotReception]
 
     def get_serializer_class(self):
         if self.action == "list":
@@ -22,14 +23,17 @@ class LeadViewSet(ModelViewSet):
         return LeadSerializer
 
     def get_queryset(self):
-        qs = Lead.objects.filter(academia=self.request.user)
+        qs = Lead.objects.filter(academia=self.request.user.tenant)
+        scope = marca_scope_for(self.request.user)
+        if scope:
+            qs = qs.filter(marca=scope)
         etapa = self.request.query_params.get("etapa")
         if etapa:
             qs = qs.filter(etapa=etapa)
         return qs
 
     def perform_create(self, serializer):
-        lead = serializer.save(academia=self.request.user)
+        lead = serializer.save(academia=self.request.user.tenant)
         try:
             append_contacto_row(lead)
         except Exception:
@@ -37,7 +41,10 @@ class LeadViewSet(ModelViewSet):
 
     @action(detail=False, methods=["get"], url_path="dashboard")
     def dashboard(self, request):
-        qs = Lead.objects.filter(academia=request.user)
+        qs = Lead.objects.filter(academia=request.user.tenant)
+        scope = marca_scope_for(request.user)
+        if scope:
+            qs = qs.filter(marca=scope)
         now = timezone.now()
 
         nuevos_hoy = qs.filter(
@@ -112,7 +119,7 @@ class LeadViewSet(ModelViewSet):
             pagador_nombre = lead.nombre_contacto
 
         pagador, _ = Pagador.objects.get_or_create(
-            academia=request.user,
+            academia=request.user.tenant,
             nombre=pagador_nombre,
             defaults={
                 "telefono": lead.telefono,
@@ -121,7 +128,7 @@ class LeadViewSet(ModelViewSet):
         )
 
         alumno = Alumno.objects.create(
-            academia=request.user,
+            academia=request.user.tenant,
             nombre=lead.nombre_alumno,
             marca=lead.marca,
             pagador=pagador,
@@ -146,7 +153,11 @@ class LeadViewSet(ModelViewSet):
 
 class InteraccionViewSet(ModelViewSet):
     serializer_class = InteraccionSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, NotReception]
 
     def get_queryset(self):
-        return Interaccion.objects.filter(lead__academia=self.request.user)
+        qs = Interaccion.objects.filter(lead__academia=self.request.user.tenant)
+        scope = marca_scope_for(self.request.user)
+        if scope:
+            qs = qs.filter(lead__marca=scope)
+        return qs

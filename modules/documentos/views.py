@@ -7,16 +7,20 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 
+from modules.authentication.rbac import NotReception, marca_scope_for
 from .models import Documento
 from .serializers import DocumentoSerializer
 
 
 class DocumentoViewSet(ModelViewSet):
     serializer_class   = DocumentoSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, NotReception]
 
     def get_queryset(self):
-        qs   = Documento.objects.filter(academia=self.request.user)
+        qs   = Documento.objects.filter(academia=self.request.user.tenant)
+        scope = marca_scope_for(self.request.user)
+        if scope:
+            qs = qs.filter(pago__marca=scope)
         pago = self.request.query_params.get("pago")
         tipo = self.request.query_params.get("tipo")
         if pago:
@@ -35,10 +39,14 @@ class DocumentoViewSet(ModelViewSet):
         if not pago_id:
             return Response({"error": "pago_id es obligatorio"}, status=status.HTTP_400_BAD_REQUEST)
 
+        pago_qs = Pago.objects.select_related("pagador", "alumno", "grupo", "academia").filter(
+            academia=request.user.tenant
+        )
+        scope = marca_scope_for(request.user)
+        if scope:
+            pago_qs = pago_qs.filter(marca=scope)
         try:
-            pago = Pago.objects.select_related(
-                "pagador", "alumno", "grupo", "academia"
-            ).get(id=pago_id, academia=request.user)
+            pago = pago_qs.get(id=pago_id)
         except Pago.DoesNotExist:
             return Response({"error": "Pago no encontrado"}, status=status.HTTP_404_NOT_FOUND)
 
@@ -61,7 +69,7 @@ class DocumentoViewSet(ModelViewSet):
             )
 
         doc = Documento.objects.create(
-            academia   = request.user,
+            academia   = request.user.tenant,
             pago       = pago,
             tipo       = tipo,
             nombre     = f"{num_doc}.pdf",

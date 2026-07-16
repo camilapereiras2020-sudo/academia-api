@@ -2,19 +2,28 @@ from rest_framework import permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
+from modules.authentication.rbac import NotReception, marca_scope_for
 from .models import Pagador
 from .serializers import PagadorSerializer
 
 
 class PagadorViewSet(ModelViewSet):
     serializer_class = PagadorSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, NotReception]
 
     def get_queryset(self):
-        return Pagador.objects.filter(academia=self.request.user).prefetch_related("alumnos")
+        qs = Pagador.objects.filter(academia=self.request.user.tenant).prefetch_related("alumnos")
+        scope = marca_scope_for(self.request.user)
+        if scope:
+            # A pagador with at least one child in the co_manager's marca is
+            # visible in full (PagadorSerializer only exposes alumnos_count,
+            # not a filtered list — the count intentionally includes any
+            # siblings in the other marca too).
+            qs = qs.filter(alumnos__marca=scope).distinct()
+        return qs
 
     def perform_create(self, serializer):
-        serializer.save(academia=self.request.user)
+        serializer.save(academia=self.request.user.tenant)
 
     @action(detail=True, methods=["post"], url_path="enviar-email")
     def enviar_email(self, request, pk=None):
@@ -37,7 +46,7 @@ class PagadorViewSet(ModelViewSet):
                 to=pagador.email,
                 subject=asunto,
                 body=cuerpo,
-                academia_nombre=getattr(request.user, "academia_nombre", "") or "",
+                academia_nombre=getattr(request.user.tenant, "academia_nombre", "") or "",
             )
             return Response({"ok": True, "id": msg_id})
         except Exception as e:

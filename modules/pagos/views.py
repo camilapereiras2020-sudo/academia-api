@@ -1,8 +1,10 @@
 from rest_framework import permissions, status
 from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 from django.utils import timezone
+from modules.authentication.rbac import NotReception, marca_scope_for
 from .models import Pago
 from .serializers import PagoSerializer
 
@@ -75,15 +77,25 @@ def _send_payment_email(pago, num_doc, emisor_nombre="Cami&Co"):
     })
 
 
-def _resolve_emisor(user, emisor_id=None):
-    """Return the Emisor for this pago. Defaults to camiandco if not specified."""
+MARCA_TO_EMISOR_SLUG = {
+    "cami_and_co": "camiandco",
+    "rangers_academy": "rangers",
+}
+
+
+def _resolve_emisor(user, emisor_id=None, marca=None):
+    """Return the Emisor for this pago: un emisor_id explícito siempre gana;
+    si no, se resuelve según la marca del pago (cada marca tiene su propia
+    identidad fiscal — NIF, numeración, IBAN), y solo cae a camiandco si no
+    hay marca reconocida."""
     from modules.documentos.models import Emisor
     if emisor_id:
         try:
             return Emisor.objects.get(id=emisor_id, academia=user)
         except Emisor.DoesNotExist:
             pass
-    return Emisor.objects.filter(academia=user, slug="camiandco").first()
+    slug = MARCA_TO_EMISOR_SLUG.get(marca, "camiandco")
+    return Emisor.objects.filter(academia=user, slug=slug).first()
 
 
 def _issue_invoice(pago):
@@ -140,12 +152,15 @@ def _issue_invoice(pago):
 
 class PagoViewSet(ModelViewSet):
     serializer_class   = PagoSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, NotReception]
 
     def get_queryset(self):
         qs = Pago.objects.filter(
-            academia=self.request.user
+            academia=self.request.user.tenant
         ).select_related("pagador", "alumno", "grupo", "emisor")
+        scope = marca_scope_for(self.request.user)
+        if scope:
+            qs = qs.filter(marca=scope)
         estado  = self.request.query_params.get("estado")
         periodo = self.request.query_params.get("periodo")
         alumno  = self.request.query_params.get("alumno")
@@ -172,17 +187,30 @@ class PagoViewSet(ModelViewSet):
         from .models import ConceptoAlias
         from .matching import best_match
 
-        drafts = Pago.objects.filter(
-            academia=request.user, estado_carga="pendiente_completar"
-        ).select_related("emisor").order_by("numero_factura_reservado", "fecha")
+        scope = marca_scope_for(request.user)
 
-        alumnos_qs   = Alumno.objects.filter(academia=request.user).values_list("id", "nombre", "grupo_id")
+        drafts = Pago.objects.filter(
+            academia=request.user.tenant, estado_carga="pendiente_completar"
+        ).select_related("emisor").order_by("numero_factura_reservado", "fecha")
+        if scope:
+            drafts = drafts.filter(marca=scope)
+
+        alumnos_all_qs = Alumno.objects.filter(academia=request.user.tenant)
+        if scope:
+            alumnos_all_qs = alumnos_all_qs.filter(marca=scope)
+        alumnos_qs   = alumnos_all_qs.values_list("id", "nombre", "grupo_id")
         alumno_candidates = [(aid, nombre) for aid, nombre, _ in alumnos_qs]
         grupo_by_alumno   = {aid: grupo_id for aid, _, grupo_id in alumnos_qs}
-        pagador_candidates = list(Pagador.objects.filter(academia=request.user).values_list("id", "nombre"))
-        grupo_nombres = dict(Grupo.objects.filter(academia=request.user).values_list("id", "nombre"))
+        pagadores_qs = Pagador.objects.filter(academia=request.user.tenant)
+        if scope:
+            pagadores_qs = pagadores_qs.filter(alumnos__marca=scope).distinct()
+        pagador_candidates = list(pagadores_qs.values_list("id", "nombre"))
+        grupo_nombres_qs = Grupo.objects.filter(academia=request.user.tenant)
+        if scope:
+            grupo_nombres_qs = grupo_nombres_qs.filter(marca=scope)
+        grupo_nombres = dict(grupo_nombres_qs.values_list("id", "nombre"))
 
-        alias_qs = ConceptoAlias.objects.filter(academia=request.user)
+        alias_qs = ConceptoAlias.objects.filter(academia=request.user.tenant)
         aliases_alumno  = {a.alias_text: a.alumno_id  for a in alias_qs if a.alumno_id}
         aliases_pagador = {a.alias_text: a.pagador_id for a in alias_qs if a.pagador_id}
 
@@ -204,8 +232,11 @@ class PagoViewSet(ModelViewSet):
         return Response(rows)
 
     def perform_create(self, serializer):
-        emisor = _resolve_emisor(self.request.user, self.request.data.get("emisor"))
-        pago   = serializer.save(academia=self.request.user, emisor=emisor)
+        scope = marca_scope_for(self.request.user)
+        if scope and serializer.validated_data.get("marca") != scope:
+            raise PermissionDenied(f"Solo podés crear pagos de la marca {scope}.")
+        emisor = _resolve_emisor(self.request.user.tenant, self.request.data.get("emisor"), serializer.validated_data.get("marca"))
+        pago   = serializer.save(academia=self.request.user.tenant, emisor=emisor)
 
         if self.request.data.get("guardar_como_borrador"):
             # Manual "save as draft" — estado_carga is read-only on the
@@ -222,12 +253,17 @@ class PagoViewSet(ModelViewSet):
         _issue_invoice(pago)
 
     def perform_update(self, serializer):
+        scope = marca_scope_for(self.request.user)
+        if scope:
+            new_marca = serializer.validated_data.get("marca", serializer.instance.marca)
+            if new_marca != scope:
+                raise PermissionDenied(f"Solo podés editar pagos de la marca {scope}.")
         was_pending = serializer.instance.estado_carga == "pendiente_completar"
         pago = serializer.save()
 
         if was_pending and pago.alumno_id and pago.pagador_id:
             if not pago.emisor_id:
-                pago.emisor = _resolve_emisor(self.request.user, self.request.data.get("emisor"))
+                pago.emisor = _resolve_emisor(self.request.user.tenant, self.request.data.get("emisor"), pago.marca)
             pago.estado_carga = "completo"
             pago.save(update_fields=["estado_carga", "emisor"])
             _issue_invoice(pago)
