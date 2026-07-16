@@ -18,7 +18,9 @@ class AlumnoViewSet(ModelViewSet):
         return AlumnoSerializer
 
     def get_queryset(self):
-        qs = Alumno.objects.filter(academia=self.request.user.tenant)
+        qs = Alumno.objects.filter(academia=self.request.user.tenant).select_related(
+            "pagador", "grupo", "empresa"
+        )
         scope = marca_scope_for(self.request.user)
         if scope:
             qs = qs.filter(marca=scope)

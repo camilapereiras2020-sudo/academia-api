@@ -17,7 +17,9 @@ class DocumentoViewSet(ModelViewSet):
     permission_classes = [permissions.IsAuthenticated, NotReception]
 
     def get_queryset(self):
-        qs   = Documento.objects.filter(academia=self.request.user.tenant)
+        qs   = Documento.objects.filter(academia=self.request.user.tenant).select_related(
+            "pago", "pago__alumno", "pago__pagador"
+        )
         scope = marca_scope_for(self.request.user)
         if scope:
             qs = qs.filter(pago__marca=scope)
