@@ -5,6 +5,7 @@ from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from modules.authentication.rbac import NotReception
 from .models import Question, TestSession, TestResult
 from .serializers import QuestionSerializer, TestResultSerializer
 
@@ -138,7 +139,12 @@ def save_contact(request, result_id):
 
 
 @api_view(["GET"])
-@permission_classes([IsAuthenticated])
+@permission_classes([IsAuthenticated, NotReception])
+# NOTE: not tenant-scoped — TestSession only has a free-text `academia_slug`
+# (client-supplied on an unauthenticated endpoint, so not trustworthy as a
+# tenant boundary) with no real FK to a User/academia. Fine while there's a
+# single real tenant in production; needs a real TestSession->academia FK
+# before a second business signs up for this SaaS. See audit notes.
 def list_results(request):
     results = TestResult.objects.select_related("session").all().order_by("-created_at")
     return Response(TestResultSerializer(results, many=True).data)
