@@ -561,7 +561,25 @@ def generate_invoice_for_pago(pago, tipo="factura"):
     # A bulk-imported draft may already carry a pre-assigned number (e.g. from
     # an external Bizum/TaxFix reconciliation) — honor it instead of
     # allocating a new one.
-    num_doc  = pago.numero_factura_reservado or _next_invoice_number(emisor, tipo_doc)
+    num_doc = pago.numero_factura_reservado
+    if not num_doc:
+        # Two concurrent requests for the same emisor+tipo must not compute
+        # the same "next number" — _next_invoice_number just scans existing
+        # rows, so without a lock both would see the same max and collide.
+        # Locking the Emisor row (Postgres in prod; a harmless no-op on
+        # SQLite, which doesn't support row locks — fine for single-user
+        # local dev) and immediately reserving the number here, before the
+        # slow PDF/Drive work below, closes the race: a second request
+        # blocks on the lock, and once it gets it, its own scan sees this
+        # reservation via the existing numero_factura_reservado check in
+        # _next_invoice_number.
+        from django.db import transaction
+        from modules.documentos.models import Emisor as EmisorModel
+        with transaction.atomic():
+            EmisorModel.objects.select_for_update().get(pk=emisor.pk)
+            num_doc = _next_invoice_number(emisor, tipo_doc)
+            pago.numero_factura_reservado = num_doc
+            pago.save(update_fields=["numero_factura_reservado"])
 
     fecha = pago.fecha or date.today()
     if isinstance(fecha, str):

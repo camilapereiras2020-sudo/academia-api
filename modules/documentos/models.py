@@ -54,7 +54,12 @@ class Documento(models.Model):
     )
     pago = models.ForeignKey(
         "pagos.Pago",
-        on_delete=models.CASCADE,
+        # PROTECT, not CASCADE: an issued Documento must never be silently
+        # deleted just because its Pago was. PagoViewSet.destroy() already
+        # blocks deleting a Pago with issued documents, but that guard only
+        # covers that one code path — PROTECT enforces it at the DB level
+        # for every path (shell, admin, management commands, ...).
+        on_delete=models.PROTECT,
         null=True,
         blank=True,
         related_name="documentos",

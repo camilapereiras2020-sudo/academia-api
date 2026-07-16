@@ -86,7 +86,13 @@ SIMPLE_JWT = {
     "ROTATE_REFRESH_TOKENS": True,
 }
 
-CORS_ALLOW_ALL_ORIGINS = True
+# Wide open only in local dev (any localhost port Vite happens to use) — in
+# production this combined with CORS_ALLOW_CREDENTIALS=True let any origin
+# read authenticated responses (django-cors-headers reflects the request's
+# Origin back instead of using "*" once credentials are allowed), silently
+# making CORS_ALLOWED_ORIGINS below dead code. Real requests only ever come
+# from the Vercel frontend, so production is locked down to just that.
+CORS_ALLOW_ALL_ORIGINS = DEBUG
 CORS_ALLOWED_ORIGINS = env.list("CORS_ALLOWED_ORIGINS", default=[
     "https://academia-frontend-psi.vercel.app",
 ])

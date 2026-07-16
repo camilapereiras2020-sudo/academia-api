@@ -1,6 +1,7 @@
 
 from django.db import models
 from django.contrib.auth import get_user_model
+from modules.tarifas.models import MARCA_CHOICES
 
 User = get_user_model()
 
@@ -11,6 +12,7 @@ TIPO_COBRO_CHOICES = [
 
 class Grupo(models.Model):
     academia = models.ForeignKey(User, on_delete=models.CASCADE, related_name="grupos")
+    marca = models.CharField(max_length=20, choices=MARCA_CHOICES, default="rangers_academy")
     nombre = models.CharField(max_length=200)
     nivel = models.CharField(max_length=50, blank=True)
     tipo_cobro = models.CharField(max_length=10, choices=TIPO_COBRO_CHOICES, default="mensual")

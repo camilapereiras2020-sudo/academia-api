@@ -1,10 +1,16 @@
+import logging
+
 from rest_framework import permissions, status
 from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 from django.utils import timezone
+from modules.authentication.rbac import NotReception, marca_scope_for
 from .models import Pago
 from .serializers import PagoSerializer
+
+logger = logging.getLogger(__name__)
 
 
 def _send_payment_email(pago, num_doc, emisor_nombre="Cami&Co"):
@@ -13,7 +19,7 @@ def _send_payment_email(pago, num_doc, emisor_nombre="Cami&Co"):
     import resend
 
     if os.environ.get("EMAIL_SENDING_ENABLED", "false").lower() != "true":
-        print(f"[email] EMAIL_SENDING_ENABLED is off — skipping email for pago {pago.id}")
+        logger.info("EMAIL_SENDING_ENABLED is off — skipping payment email for pago %s", pago.id)
         return
 
     if not pago.alumno or not pago.pagador:
@@ -21,7 +27,11 @@ def _send_payment_email(pago, num_doc, emisor_nombre="Cami&Co"):
 
     email   = getattr(pago.pagador, "email", "") or ""
     api_key = getattr(settings, "RESEND_API_KEY", "") or ""
-    if not email or not api_key or api_key == "re_placeholder":
+    if not email:
+        logger.warning("Pago %s: pagador has no email on file — payment confirmation not sent", pago.id)
+        return
+    if not api_key or api_key == "re_placeholder":
+        logger.error("RESEND_API_KEY is missing/placeholder — payment confirmation for pago %s not sent", pago.id)
         return
 
     resend.api_key     = api_key
@@ -75,15 +85,25 @@ def _send_payment_email(pago, num_doc, emisor_nombre="Cami&Co"):
     })
 
 
-def _resolve_emisor(user, emisor_id=None):
-    """Return the Emisor for this pago. Defaults to camiandco if not specified."""
+MARCA_TO_EMISOR_SLUG = {
+    "cami_and_co": "camiandco",
+    "rangers_academy": "rangers",
+}
+
+
+def _resolve_emisor(user, emisor_id=None, marca=None):
+    """Return the Emisor for this pago: un emisor_id explícito siempre gana;
+    si no, se resuelve según la marca del pago (cada marca tiene su propia
+    identidad fiscal — NIF, numeración, IBAN), y solo cae a camiandco si no
+    hay marca reconocida."""
     from modules.documentos.models import Emisor
     if emisor_id:
         try:
             return Emisor.objects.get(id=emisor_id, academia=user)
         except Emisor.DoesNotExist:
             pass
-    return Emisor.objects.filter(academia=user, slug="camiandco").first()
+    slug = MARCA_TO_EMISOR_SLUG.get(marca, "camiandco")
+    return Emisor.objects.filter(academia=user, slug=slug).first()
 
 
 def _issue_invoice(pago):
@@ -92,7 +112,7 @@ def _issue_invoice(pago):
     perform_update's draft-completion path (bulk-imported pagos).
     """
     if not pago.emisor:
-        print(f"[invoice] no emisor found for pago {pago.id} — skipping PDF generation")
+        logger.error("No emisor found for pago %s — skipping invoice generation", pago.id)
         return
 
     from modules.documentos.models import Documento
@@ -101,7 +121,7 @@ def _issue_invoice(pago):
         # allocate a second num_doc for the same real-world payment. Editing
         # a pago (status, grupo, etc.) after its invoice was already issued
         # must not regenerate one.
-        print(f"[invoice] pago {pago.id} already has an issued documento — skipping regeneration")
+        logger.info("Pago %s already has an issued documento — skipping regeneration", pago.id)
         return
 
     try:
@@ -123,16 +143,16 @@ def _issue_invoice(pago):
         pago.save(update_fields=["num_doc"])
         try:
             _send_payment_email(pago, num_doc, pago.emisor.nombre)
-        except Exception as e:
-            print(f"[email] notification failed for pago {pago.id}: {e}")
+        except Exception:
+            logger.exception("Payment confirmation email failed for pago %s", pago.id)
         try:
             from modules.documentos.sheets_log import log_emision
             log_emision(doc)
-        except Exception as e:
-            print(f"[invoice] sheet log failed (non-critical): {e}")
+        except Exception:
+            logger.exception("Sheet log failed for pago %s (non-critical)", pago.id)
     except Exception as e:
         err = str(e)
-        print(f"[invoice] auto-generate failed for pago {pago.id}: {err}")
+        logger.exception("Invoice auto-generation failed for pago %s", pago.id)
         note = f"⚠ Factura no generada: {err}"
         pago.notas = ((pago.notas or "") + "\n" + note).strip()
         pago.save(update_fields=["notas"])
@@ -140,12 +160,15 @@ def _issue_invoice(pago):
 
 class PagoViewSet(ModelViewSet):
     serializer_class   = PagoSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, NotReception]
 
     def get_queryset(self):
         qs = Pago.objects.filter(
-            academia=self.request.user
+            academia=self.request.user.tenant
         ).select_related("pagador", "alumno", "grupo", "emisor")
+        scope = marca_scope_for(self.request.user)
+        if scope:
+            qs = qs.filter(marca=scope)
         estado  = self.request.query_params.get("estado")
         periodo = self.request.query_params.get("periodo")
         alumno  = self.request.query_params.get("alumno")
@@ -160,22 +183,95 @@ class PagoViewSet(ModelViewSet):
         if estado_carga: qs = qs.filter(estado_carga=estado_carga)
         return qs
 
+    @action(detail=False, methods=["get"], url_path="sugerencias")
+    def sugerencias(self, request):
+        """For each pendiente_completar draft, suggest an alumno/pagador (and
+        the matched alumno's grupo, if any) by fuzzy-matching concepto_original.
+        Read-only — no writes, no invoice generation, no external calls.
+        """
+        from modules.alumnos.models import Alumno
+        from modules.pagadores.models import Pagador
+        from modules.grupos.models import Grupo
+        from .models import ConceptoAlias
+        from .matching import best_match
+
+        scope = marca_scope_for(request.user)
+
+        drafts = Pago.objects.filter(
+            academia=request.user.tenant, estado_carga="pendiente_completar"
+        ).select_related("emisor").order_by("numero_factura_reservado", "fecha")
+        if scope:
+            drafts = drafts.filter(marca=scope)
+
+        alumnos_all_qs = Alumno.objects.filter(academia=request.user.tenant)
+        if scope:
+            alumnos_all_qs = alumnos_all_qs.filter(marca=scope)
+        alumnos_qs   = alumnos_all_qs.values_list("id", "nombre", "grupo_id")
+        alumno_candidates = [(aid, nombre) for aid, nombre, _ in alumnos_qs]
+        grupo_by_alumno   = {aid: grupo_id for aid, _, grupo_id in alumnos_qs}
+        pagadores_qs = Pagador.objects.filter(academia=request.user.tenant)
+        if scope:
+            pagadores_qs = pagadores_qs.filter(alumnos__marca=scope).distinct()
+        pagador_candidates = list(pagadores_qs.values_list("id", "nombre"))
+        grupo_nombres_qs = Grupo.objects.filter(academia=request.user.tenant)
+        if scope:
+            grupo_nombres_qs = grupo_nombres_qs.filter(marca=scope)
+        grupo_nombres = dict(grupo_nombres_qs.values_list("id", "nombre"))
+
+        alias_qs = ConceptoAlias.objects.filter(academia=request.user.tenant)
+        aliases_alumno  = {a.alias_text: a.alumno_id  for a in alias_qs if a.alumno_id}
+        aliases_pagador = {a.alias_text: a.pagador_id for a in alias_qs if a.pagador_id}
+
+        rows = []
+        for pago in drafts:
+            sug_alumno  = best_match(pago.concepto_original, alumno_candidates, aliases=aliases_alumno)
+            sug_pagador = best_match(pago.concepto_original, pagador_candidates, aliases=aliases_pagador)
+            sug_grupo   = None
+            if sug_alumno:
+                gid = grupo_by_alumno.get(sug_alumno["id"])
+                if gid:
+                    sug_grupo = {"id": gid, "nombre": grupo_nombres.get(gid, "")}
+            rows.append({
+                "pago": PagoSerializer(pago).data,
+                "sugerencia_alumno": sug_alumno,
+                "sugerencia_pagador": sug_pagador,
+                "sugerencia_grupo": sug_grupo,
+            })
+        return Response(rows)
+
     def perform_create(self, serializer):
-        emisor = _resolve_emisor(self.request.user, self.request.data.get("emisor"))
-        pago   = serializer.save(academia=self.request.user, emisor=emisor)
+        scope = marca_scope_for(self.request.user)
+        if scope and serializer.validated_data.get("marca") != scope:
+            raise PermissionDenied(f"Solo podés crear pagos de la marca {scope}.")
+        emisor = _resolve_emisor(self.request.user.tenant, self.request.data.get("emisor"), serializer.validated_data.get("marca"))
+        pago   = serializer.save(academia=self.request.user.tenant, emisor=emisor)
+
+        if self.request.data.get("guardar_como_borrador"):
+            # Manual "save as draft" — estado_carga is read-only on the
+            # serializer (so a client can't set it directly), so this is a
+            # deliberate request-level signal instead. Same fate as a
+            # bulk-imported draft: no number, no invoice, until completed.
+            pago.estado_carga = "pendiente_completar"
+            pago.save(update_fields=["estado_carga"])
+            return
 
         if pago.estado_carga == "pendiente_completar":
-            return  # bulk-imported draft — nothing to issue until it's completed
+            return  # created directly as a draft some other way (e.g. bulk import)
 
         _issue_invoice(pago)
 
     def perform_update(self, serializer):
+        scope = marca_scope_for(self.request.user)
+        if scope:
+            new_marca = serializer.validated_data.get("marca", serializer.instance.marca)
+            if new_marca != scope:
+                raise PermissionDenied(f"Solo podés editar pagos de la marca {scope}.")
         was_pending = serializer.instance.estado_carga == "pendiente_completar"
         pago = serializer.save()
 
         if was_pending and pago.alumno_id and pago.pagador_id:
             if not pago.emisor_id:
-                pago.emisor = _resolve_emisor(self.request.user, self.request.data.get("emisor"))
+                pago.emisor = _resolve_emisor(self.request.user.tenant, self.request.data.get("emisor"), pago.marca)
             pago.estado_carga = "completo"
             pago.save(update_fields=["estado_carga", "emisor"])
             _issue_invoice(pago)
@@ -187,6 +283,12 @@ class PagoViewSet(ModelViewSet):
                 {"error": "Este pago tiene documentos emitidos: anúlalos en vez de eliminar el pago."},
                 status=status.HTTP_409_CONFLICT,
             )
+        # Documento.pago is on_delete=PROTECT now (an issued Documento must
+        # never cascade-delete) — but a lingering borrador Documento (never
+        # actually issued, no Drive/local file) is meant to be freely
+        # discardable along with its draft Pago, so it's cleaned up
+        # explicitly here rather than relying on cascade.
+        pago.documentos.filter(estado="borrador").delete()
         return super().destroy(request, *args, **kwargs)
 
     @action(detail=True, methods=["post"], url_path="anular")

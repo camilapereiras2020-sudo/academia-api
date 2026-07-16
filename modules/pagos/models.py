@@ -57,3 +57,24 @@ class Pago(models.Model):
 
     def __str__(self):
         return f"{self.num_doc} - {self.alumno} ({self.periodo})"
+
+
+class ConceptoAlias(models.Model):
+    """Maps a recurring Bizum concepto_original phrase (or a nickname) to a
+    specific Alumno and/or Pagador, checked first by matching.best_match()
+    before falling back to token-based fuzzy matching.
+    """
+    academia   = models.ForeignKey(User, on_delete=models.CASCADE, related_name="concepto_alias")
+    alias_text = models.CharField(max_length=100)
+    alumno     = models.ForeignKey("alumnos.Alumno", on_delete=models.CASCADE, null=True, blank=True, related_name="concepto_alias")
+    pagador    = models.ForeignKey("pagadores.Pagador", on_delete=models.CASCADE, null=True, blank=True, related_name="concepto_alias")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["alias_text"]
+        unique_together = [("academia", "alias_text")]
+        verbose_name = "Alias de concepto"
+        verbose_name_plural = "Alias de concepto"
+
+    def __str__(self):
+        return self.alias_text

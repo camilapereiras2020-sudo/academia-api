@@ -1,9 +1,14 @@
 
 from rest_framework import serializers
 from .models import Alumno
+from modules.core.mixins import TenantScopedFKMixin
+from modules.grupos.models import Grupo
+from modules.pagadores.models import Pagador
+from modules.empresas.models import Empresa
 
 
-class AlumnoSerializer(serializers.ModelSerializer):
+class AlumnoSerializer(TenantScopedFKMixin, serializers.ModelSerializer):
+    tenant_scoped_fields = {"grupo": Grupo, "pagador": Pagador, "empresa": Empresa}
     pagador_nombre = serializers.CharField(source="pagador.nombre", read_only=True, default="")
     grupo_nombre = serializers.CharField(source="grupo.nombre", read_only=True, default="")
     empresa_nombre = serializers.CharField(source="empresa.nombre", read_only=True, default="")
@@ -31,3 +36,14 @@ class AlumnoSerializer(serializers.ModelSerializer):
             "es_fundae", "nivel", "notas", "activo", "created_at",
         ]
         read_only_fields = ["id", "created_at", "grupos_detalle"]
+
+
+class AlumnoReceptionSerializer(AlumnoSerializer):
+    """Restricted view for role="reception": basic contact info, read+write,
+    plus read-only marca/grupo context so she knows who's in which class.
+    Everything financial/administrative (pagador, empresa, notas, nivel,
+    es_fundae, activo, fecha_nacimiento) is intentionally left out."""
+
+    class Meta(AlumnoSerializer.Meta):
+        fields = ["id", "nombre", "telefono", "email", "marca", "marca_display", "grupo", "grupo_nombre", "grupos_detalle"]
+        read_only_fields = ["id", "marca", "marca_display", "grupo", "grupo_nombre", "grupos_detalle"]

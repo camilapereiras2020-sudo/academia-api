@@ -1,6 +1,9 @@
 from django.db import transaction
 from rest_framework import serializers
 from .models import Tarea, TareaCompletada, NotaDificultad
+from modules.core.mixins import TenantScopedFKMixin
+from modules.grupos.models import Grupo
+from modules.alumnos.models import Alumno
 
 
 class TareaCompletadaSerializer(serializers.ModelSerializer):
@@ -11,7 +14,8 @@ class TareaCompletadaSerializer(serializers.ModelSerializer):
         fields = ["id", "alumno", "alumno_nombre", "estado", "nota"]
 
 
-class TareaSerializer(serializers.ModelSerializer):
+class TareaSerializer(TenantScopedFKMixin, serializers.ModelSerializer):
+    tenant_scoped_fields = {"grupo": Grupo}
     completados = TareaCompletadaSerializer(many=True, read_only=True)
     grupo_nombre = serializers.CharField(source="grupo.nombre", read_only=True)
 
@@ -25,6 +29,7 @@ class TareaSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         completados_data = self.context["request"].data.get("completados", [])
+        tenant = self.context["request"].user.tenant
         seen_alumnos = set()
         for c in completados_data:
             if c["alumno"] in seen_alumnos:
@@ -32,6 +37,18 @@ class TareaSerializer(serializers.ModelSerializer):
                     {"completados": f"El alumno {c['alumno']} aparece más de una vez."}
                 )
             seen_alumnos.add(c["alumno"])
+
+        # completados bypasses validated_data (it's built from raw request
+        # data, not a nested serializer), so it needs its own tenant check —
+        # the tenant_scoped_fields mixin only covers the `grupo` field above.
+        valid_ids = set(
+            Alumno.objects.filter(academia=tenant, id__in=seen_alumnos).values_list("id", flat=True)
+        )
+        invalid_ids = seen_alumnos - valid_ids
+        if invalid_ids:
+            raise serializers.ValidationError(
+                {"completados": f"Alumno(s) no encontrados: {sorted(invalid_ids)}"}
+            )
 
         with transaction.atomic():
             tarea = Tarea.objects.create(**validated_data)
@@ -45,7 +62,8 @@ class TareaSerializer(serializers.ModelSerializer):
         return tarea
 
 
-class NotaDificultadSerializer(serializers.ModelSerializer):
+class NotaDificultadSerializer(TenantScopedFKMixin, serializers.ModelSerializer):
+    tenant_scoped_fields = {"grupo": Grupo, "alumno": Alumno}
     alumno_nombre = serializers.CharField(source="alumno.nombre", read_only=True)
     grupo_nombre = serializers.CharField(source="grupo.nombre", read_only=True)
 
