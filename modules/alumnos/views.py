@@ -103,6 +103,10 @@ class AlumnoViewSet(ModelViewSet):
     def cumpleanos(self, request):
         from datetime import date, timedelta
         today = date.today()
+        try:
+            window = int(request.query_params.get("dias", 30))
+        except ValueError:
+            window = 30
         upcoming = []
         for alumno in self.get_queryset():
             if alumno.fecha_nacimiento:
@@ -110,7 +114,7 @@ class AlumnoViewSet(ModelViewSet):
                 if bd < today:
                     bd = bd.replace(year=today.year + 1)
                 days = (bd - today).days
-                if days <= 30:
+                if days <= window:
                     upcoming.append({
                         "id": alumno.id,
                         "nombre": alumno.nombre,
