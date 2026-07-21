@@ -6,9 +6,9 @@ from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 from django.utils import timezone
-from modules.authentication.rbac import NotReception, marca_scope_for
+from modules.authentication.rbac import ReadOnlyForReception, marca_scope_for
 from .models import Pago
-from .serializers import PagoSerializer
+from .serializers import PagoSerializer, PagoReceptionSerializer
 
 logger = logging.getLogger(__name__)
 
@@ -160,7 +160,12 @@ def _issue_invoice(pago):
 
 class PagoViewSet(ModelViewSet):
     serializer_class   = PagoSerializer
-    permission_classes = [permissions.IsAuthenticated, NotReception]
+    permission_classes = [permissions.IsAuthenticated, ReadOnlyForReception]
+
+    def get_serializer_class(self):
+        if self.request.user.role == "reception":
+            return PagoReceptionSerializer
+        return PagoSerializer
 
     def get_queryset(self):
         qs = Pago.objects.filter(
