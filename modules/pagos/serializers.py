@@ -50,3 +50,18 @@ class PagoSerializer(TenantScopedFKMixin, serializers.ModelSerializer):
                     "No se puede quitar alumno/pagador de un pago con documentos ya emitidos."
                 )
         return attrs
+
+
+class PagoReceptionSerializer(PagoSerializer):
+    """Restricted, read-only view for role="reception": just enough to pick
+    an existing paid pago and generate its factura/recibo. No amounts
+    (mensualidad/descuento/extras/total), no payment method, no notes, no
+    stripe/iban/serie details — those are financial/administrative and out
+    of her scope."""
+
+    class Meta(PagoSerializer.Meta):
+        fields = [
+            "id", "marca", "marca_display", "pagador_nombre", "alumno_nombre",
+            "grupo_nombre", "periodo", "estado", "num_doc",
+        ]
+        read_only_fields = fields

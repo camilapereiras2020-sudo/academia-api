@@ -4,17 +4,21 @@ from django.http import HttpResponse
 from django.utils import timezone
 from rest_framework import permissions, status
 from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 
-from modules.authentication.rbac import NotReception, marca_scope_for
+from modules.authentication.rbac import marca_scope_for
 from .models import Documento
 from .serializers import DocumentoSerializer
 
 
 class DocumentoViewSet(ModelViewSet):
     serializer_class   = DocumentoSerializer
-    permission_classes = [permissions.IsAuthenticated, NotReception]
+    # reception is allowed here (unlike most viewsets) so she can generate
+    # and download invoices/recibos for existing pagos — but destroy/anular
+    # below are explicitly blocked for her, those are financial/admin-only.
+    permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
         qs   = Documento.objects.filter(academia=self.request.user.tenant).select_related(
@@ -134,6 +138,8 @@ class DocumentoViewSet(ModelViewSet):
         return Response({"error": "Archivo no encontrado"}, status=status.HTTP_404_NOT_FOUND)
 
     def destroy(self, request, *args, **kwargs):
+        if request.user.role == "reception":
+            raise PermissionDenied("No tenés permiso para eliminar documentos.")
         doc = self.get_object()
 
         if doc.is_issued:
@@ -148,6 +154,8 @@ class DocumentoViewSet(ModelViewSet):
 
     @action(detail=True, methods=["post"], url_path="anular")
     def anular(self, request, pk=None):
+        if request.user.role == "reception":
+            raise PermissionDenied("No tenés permiso para anular documentos.")
         doc = self.get_object()
         if doc.estado == "anulada":
             return Response({"error": "Este documento ya está anulado."}, status=status.HTTP_400_BAD_REQUEST)
