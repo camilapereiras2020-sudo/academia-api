@@ -13,6 +13,7 @@ from .serializers import (
     FechaImportanteSerializer, NotaAlumnoSerializer,
     ConsentimientoAlumnoSerializer, DatoSaludSerializer,
 )
+from .services import alumnos_con_cumpleanos_proximos
 
 MAX_FOTO_BYTES = 5 * 1024 * 1024
 FOTO_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
@@ -146,27 +147,11 @@ class AlumnoViewSet(ContactableViaPagadorMixin, ModelViewSet):
 
     @action(detail=False, methods=["get"], url_path="cumpleanos")
     def cumpleanos(self, request):
-        from datetime import date, timedelta
-        today = date.today()
         try:
             window = int(request.query_params.get("dias", 30))
         except ValueError:
             window = 30
-        upcoming = []
-        for alumno in self.get_queryset():
-            if alumno.fecha_nacimiento:
-                bd = alumno.fecha_nacimiento.replace(year=today.year)
-                if bd < today:
-                    bd = bd.replace(year=today.year + 1)
-                days = (bd - today).days
-                if days <= window:
-                    upcoming.append({
-                        "id": alumno.id,
-                        "nombre": alumno.nombre,
-                        "fecha_nacimiento": alumno.fecha_nacimiento,
-                        "dias_para_cumpleanos": days,
-                    })
-        return Response(sorted(upcoming, key=lambda x: x["dias_para_cumpleanos"]))
+        return Response(alumnos_con_cumpleanos_proximos(self.get_queryset(), window))
 
     @action(detail=True, methods=["get"], url_path="resumen")
     def resumen(self, request, pk=None):
