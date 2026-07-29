@@ -191,61 +191,49 @@ def delete_drive_file(file_id: str) -> None:
 # ── Invoice numbering ─────────────────────────────────────────────────────────
 
 def _next_invoice_number(emisor, tipo: str) -> str:
-    """Determine next doc number for this emisor+tipo by scanning DB.
+    """Atomically allocate the next doc number for this emisor+tipo.
 
-    "factura"/"recibo" use a letter prefix + year suffix (e.g. "CC236-26").
-    "recibo_efectivo" is a separate, isolated sequence: no letter prefix, a
-    fixed per-emisor letter suffix instead of the year (e.g. "200C") — see
-    Emisor.recibo_efectivo_suffix/_baseline.
+    Numbering redesign: replaces the old DB-scan-for-max approach with a
+    counter field on Emisor (factura_counter/recibo_counter), incremented
+    and saved in place. "efectivo" (cash) no longer has its own isolated
+    sequence — tipo_doc_for_metodo folds it into "recibo", so this function
+    only ever sees "factura" or "recibo" now (recibo_efectivo_* fields on
+    Emisor are legacy/historical-only, kept for old documents' readability).
+
+    Both buckets use prefix + counter + year suffix (e.g. "CC237-26"). The
+    counter resets to each Emisor's baseline every calendar year — same
+    externally-visible behaviour as the old suffix-filtered scan, just
+    without re-scanning the DB on every call.
+
+    IMPORTANT: caller must pass an `emisor` fetched with select_for_update()
+    inside the same transaction, and hold that lock until this call
+    (which both reads and writes the counter) returns — otherwise two
+    concurrent requests can read the same counter value and allocate the
+    same number.
     """
-    from modules.documentos.models import Documento
-    from modules.pagos.models import Pago
+    year   = date.today().year
+    suffix = f"-{str(year)[2:]}"
 
-    if tipo == "recibo_efectivo":
-        prefix   = ""
-        baseline = emisor.recibo_efectivo_baseline
-        suffix   = emisor.recibo_efectivo_suffix
-        if not suffix:
-            # An empty prefix + empty suffix would match every existing
-            # num_doc (startswith/endswith "" matches everything), silently
-            # merging this "isolated" sequence with CC/RE/RA/RR. Fail loud
-            # instead of a misconfigured Emisor corrupting the count.
-            raise ValueError(f"Emisor {emisor.slug!r} has no recibo_efectivo_suffix configured.")
-    elif tipo == "factura":
-        prefix   = emisor.factura_prefix
-        baseline = emisor.factura_baseline
-        suffix   = f"-{str(date.today().year)[2:]}"
+    if tipo == "factura":
+        prefix, baseline          = emisor.factura_prefix, emisor.factura_baseline
+        counter, counter_year     = emisor.factura_counter, emisor.factura_counter_year
+        counter_field, year_field = "factura_counter", "factura_counter_year"
     else:
-        prefix   = emisor.recibo_prefix
-        baseline = emisor.recibo_baseline
-        suffix   = f"-{str(date.today().year)[2:]}"
+        # "recibo" — includes former "recibo_efectivo"/cash pagos, now
+        # folded into this same bucket (see tipo_doc_for_metodo).
+        prefix, baseline          = emisor.recibo_prefix, emisor.recibo_baseline
+        counter, counter_year     = emisor.recibo_counter, emisor.recibo_counter_year
+        counter_field, year_field = "recibo_counter", "recibo_counter_year"
 
-    max_num = baseline
+    if counter_year != year:
+        counter = baseline
 
-    def _filters(field):
-        f = {f"{field}__endswith": suffix}
-        if prefix:
-            f[f"{field}__startswith"] = prefix
-        return f
+    next_num = counter + 1
+    setattr(emisor, counter_field, next_num)
+    setattr(emisor, year_field, year)
+    emisor.save(update_fields=[counter_field, year_field])
 
-    for qs in (
-        Documento.objects.filter(academia=emisor.academia, **_filters("num_doc"))
-            .values_list("num_doc", flat=True),
-        Pago.objects.filter(academia=emisor.academia, **_filters("num_doc"))
-            .values_list("num_doc", flat=True),
-        # numbers already reserved for a not-yet-completed draft Pago (bulk
-        # import) must also block reuse, even though they haven't been issued
-        Pago.objects.filter(academia=emisor.academia, **_filters("numero_factura_reservado"))
-            .values_list("numero_factura_reservado", flat=True),
-    ):
-        for num_doc in qs:
-            try:
-                middle  = num_doc[len(prefix) : -len(suffix)] if suffix else num_doc[len(prefix):]
-                max_num = max(max_num, int(middle))
-            except (ValueError, IndexError):
-                pass
-
-    return f"{prefix}{max_num + 1}{suffix}"
+    return f"{prefix}{next_num}{suffix}"
 
 
 # ── Formatting helpers ────────────────────────────────────────────────────────
@@ -536,9 +524,10 @@ def generate_pdf_bytes(
 def generate_invoice_for_pago(pago, tipo="factura"):
     """Generate PDF for a Pago using its Emisor, upload to Drive.
     Returns (num_doc, drive_file_id, tipo_doc). tipo_doc is the authoritative
-    bucket ("factura"/"recibo"/"recibo_efectivo") derived from pago.metodo —
-    callers should store *this* on the Documento, not their own guess (the
-    `tipo` param above is legacy and not used for numbering).
+    bucket ("factura"/"recibo" — "efectivo"/cash folds into "recibo" as of
+    the numbering redesign) derived from pago.metodo — callers should store
+    *this* on the Documento, not their own guess (the `tipo` param above is
+    legacy and not used for numbering).
     """
     if pago.estado_carga == "pendiente_completar" or not pago.alumno_id or not pago.pagador_id:
         raise ValueError(
@@ -563,21 +552,22 @@ def generate_invoice_for_pago(pago, tipo="factura"):
     # allocating a new one.
     num_doc = pago.numero_factura_reservado
     if not num_doc:
-        # Two concurrent requests for the same emisor+tipo must not compute
-        # the same "next number" — _next_invoice_number just scans existing
-        # rows, so without a lock both would see the same max and collide.
-        # Locking the Emisor row (Postgres in prod; a harmless no-op on
-        # SQLite, which doesn't support row locks — fine for single-user
-        # local dev) and immediately reserving the number here, before the
-        # slow PDF/Drive work below, closes the race: a second request
-        # blocks on the lock, and once it gets it, its own scan sees this
-        # reservation via the existing numero_factura_reservado check in
-        # _next_invoice_number.
+        # Two concurrent requests for the same emisor+tipo must not allocate
+        # the same "next number". Locking the Emisor row (Postgres in prod;
+        # a harmless no-op on SQLite, which doesn't support row locks — fine
+        # for single-user local dev), then reading+incrementing its counter
+        # while the lock is held, closes the race: a second request blocks
+        # on the lock, and once it gets it, re-fetches the row and sees the
+        # already-incremented counter. Must use the freshly locked instance
+        # (not the `emisor` fetched before the lock) — _next_invoice_number
+        # reads counter fields off the Python object now instead of
+        # re-scanning the DB, so a stale object would hand out a stale
+        # number.
         from django.db import transaction
         from modules.documentos.models import Emisor as EmisorModel
         with transaction.atomic():
-            EmisorModel.objects.select_for_update().get(pk=emisor.pk)
-            num_doc = _next_invoice_number(emisor, tipo_doc)
+            locked_emisor = EmisorModel.objects.select_for_update().get(pk=emisor.pk)
+            num_doc = _next_invoice_number(locked_emisor, tipo_doc)
             pago.numero_factura_reservado = num_doc
             pago.save(update_fields=["numero_factura_reservado"])
 

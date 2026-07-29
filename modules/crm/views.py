@@ -191,3 +191,12 @@ class InteraccionViewSet(ModelViewSet):
         if scope:
             qs = qs.filter(lead__marca=scope)
         return qs
+
+    def perform_create(self, serializer):
+        # Logging an interaction is the one event that should actually reset
+        # the "went cold" clock — unlike Lead.updated_at (an auto_now field
+        # that changes on any unrelated edit), last_contacted_at only moves
+        # when someone genuinely logs a contact here.
+        interaccion = serializer.save()
+        interaccion.lead.last_contacted_at = interaccion.fecha
+        interaccion.lead.save(update_fields=["last_contacted_at"])

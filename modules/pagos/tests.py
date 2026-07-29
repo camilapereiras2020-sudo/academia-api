@@ -224,7 +224,7 @@ class DraftCompletionFlowTests(TestCase):
     @patch("modules.pagos.views._send_payment_email")
     @patch("modules.documentos.invoice_service.generate_invoice_for_pago")
     def test_patch_completes_draft_and_calls_generation_exactly_once(self, mock_generate, mock_email, mock_log_emision):
-        mock_generate.return_value = ("CC252-26", "fake-drive-id")
+        mock_generate.return_value = ("CC252-26", "fake-drive-id", "factura")
 
         resp = self.client.patch(
             f"/api/v1/pagos/{self.draft.id}/",

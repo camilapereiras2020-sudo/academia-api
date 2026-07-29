@@ -115,47 +115,61 @@ def _issue_invoice(pago):
         logger.error("No emisor found for pago %s — skipping invoice generation", pago.id)
         return
 
+    from django.db import transaction
     from modules.documentos.models import Documento
-    if pago.documentos.exclude(estado="borrador").exists():
-        # A non-borrador Documento already exists for this pago — never
-        # allocate a second num_doc for the same real-world payment. Editing
-        # a pago (status, grupo, etc.) after its invoice was already issued
-        # must not regenerate one.
-        logger.info("Pago %s already has an issued documento — skipping regeneration", pago.id)
-        return
 
+    with transaction.atomic():
+        # Lock the Pago row so two near-simultaneous calls (double-click,
+        # two tabs/devices, or perform_create racing perform_update) can't
+        # both pass the "already has a documento" check before either one
+        # creates it — same select_for_update pattern already used for the
+        # Emisor row in invoice_service.generate_invoice_for_pago.
+        locked_pago = Pago.objects.select_for_update().get(pk=pago.pk)
+        if locked_pago.documentos.exclude(estado="borrador").exists():
+            # A non-borrador Documento already exists for this pago — never
+            # allocate a second num_doc for the same real-world payment. Editing
+            # a pago (status, grupo, etc.) after its invoice was already issued
+            # must not regenerate one.
+            logger.info("Pago %s already has an issued documento — skipping regeneration", pago.id)
+            return
+
+        try:
+            from modules.documentos.invoice_service import generate_invoice_for_pago
+            num_doc, drive_id, tipo = generate_invoice_for_pago(pago)
+            doc = Documento.objects.create(
+                academia   = pago.academia,
+                pago       = pago,
+                tipo       = tipo,
+                nombre     = f"{num_doc}.pdf",
+                num_doc    = num_doc,
+                s3_key     = drive_id,
+                local_path = "",
+                mime_type  = "application/pdf",
+                estado     = "emitida",
+                emitida_at = timezone.now(),
+            )
+            pago.num_doc = num_doc
+            pago.save(update_fields=["num_doc"])
+        except Exception as e:
+            err = str(e)
+            logger.exception("Invoice auto-generation failed for pago %s", pago.id)
+            note = f"⚠ Factura no generada: {err}"
+            pago.notas = ((pago.notas or "") + "\n" + note).strip()
+            pago.save(update_fields=["notas"])
+            return
+
+    # Outside the lock: email + sheet logging are best-effort side effects,
+    # not part of the duplicate-prevention guarantee, so they shouldn't hold
+    # the Pago row locked while they make external calls.
     try:
-        from modules.documentos.invoice_service import generate_invoice_for_pago
-        num_doc, drive_id, tipo = generate_invoice_for_pago(pago)
-        doc = Documento.objects.create(
-            academia   = pago.academia,
-            pago       = pago,
-            tipo       = tipo,
-            nombre     = f"{num_doc}.pdf",
-            num_doc    = num_doc,
-            s3_key     = drive_id,
-            local_path = "",
-            mime_type  = "application/pdf",
-            estado     = "emitida",
-            emitida_at = timezone.now(),
-        )
-        pago.num_doc = num_doc
-        pago.save(update_fields=["num_doc"])
-        try:
-            _send_payment_email(pago, num_doc, pago.emisor.nombre)
-        except Exception:
-            logger.exception("Payment confirmation email failed for pago %s", pago.id)
-        try:
-            from modules.documentos.sheets_log import log_emision
-            log_emision(doc)
-        except Exception:
-            logger.exception("Sheet log failed for pago %s (non-critical)", pago.id)
-    except Exception as e:
-        err = str(e)
-        logger.exception("Invoice auto-generation failed for pago %s", pago.id)
-        note = f"⚠ Factura no generada: {err}"
-        pago.notas = ((pago.notas or "") + "\n" + note).strip()
-        pago.save(update_fields=["notas"])
+        _send_payment_email(pago, num_doc, pago.emisor.nombre)
+    except Exception:
+        logger.exception("Payment confirmation email failed for pago %s", pago.id)
+    try:
+        from modules.documentos.sheets_log import log_emision
+        log_emision(doc)
+    except Exception:
+        logger.exception("Sheet log failed for pago %s (non-critical)", pago.id)
 
 
 class PagoViewSet(ModelViewSet):

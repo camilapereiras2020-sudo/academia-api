@@ -74,6 +74,12 @@ class Lead(models.Model):
     etapa = models.CharField(max_length=20, choices=ETAPA_CHOICES, default="nueva_consulta")
     proximo_seguimiento = models.DateField(null=True, blank=True)
 
+    # Set automatically whenever an Interaccion is logged against this lead
+    # (see InteraccionViewSet.perform_create) — unlike updated_at, this is
+    # NOT touched by unrelated edits (stage changes, notes, etc.), so it's a
+    # true "last time someone actually contacted this person" signal.
+    last_contacted_at = models.DateTimeField(null=True, blank=True)
+
     # Vinculo con alumno si se matricula
     alumno = models.OneToOneField(
         "alumnos.Alumno", null=True, blank=True,
@@ -94,6 +100,29 @@ class Lead(models.Model):
         from django.utils import timezone
         delta = timezone.now() - self.updated_at
         return delta.total_seconds() / 3600
+
+    @property
+    def dias_sin_contacto(self):
+        """Days since last_contacted_at, falling back to created_at if this
+        lead has never had an Interaccion logged. This is the graduated
+        replacement for the old binary horas_sin_mover>24 'alerta' — that
+        signal reset on ANY save (editing a field, changing stage) and did
+        NOT reset when someone actually logged a contact, so it was
+        unreliable. This one only moves when a real Interaccion is created.
+        """
+        from django.utils import timezone
+        reference = self.last_contacted_at or self.created_at
+        delta = timezone.now() - reference
+        return delta.days
+
+    @property
+    def seguimiento_vencido(self):
+        """True if this lead has a proximo_seguimiento date and it has
+        already passed."""
+        from django.utils import timezone
+        if not self.proximo_seguimiento:
+            return False
+        return self.proximo_seguimiento < timezone.now().date()
 
 
 class Interaccion(models.Model):

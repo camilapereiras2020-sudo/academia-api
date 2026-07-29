@@ -33,10 +33,24 @@ class Emisor(models.Model):
     recibo_prefix    = models.CharField(max_length=10, default="RE")
     factura_baseline = models.IntegerField(default=0)
     recibo_baseline  = models.IntegerField(default=0)
-    # Cash ("efectivo") receipts get their own sequence, isolated from the
-    # RE/RR recibo bucket: NUMBER + suffix, no year suffix (e.g. "200C").
+    # Legacy cash ("efectivo") sequence — historical-only. Cash receipts used
+    # to get their own isolated NUMBER+suffix sequence (e.g. "200C"), separate
+    # from the recibo bucket. As of the numbering redesign, "efectivo" folds
+    # into the same recibo_counter as everything else (see
+    # pagos.constants.tipo_doc_for_metodo); these two fields are kept only so
+    # already-issued "NNNC"/"NNNR" documents remain readable — nothing new is
+    # ever numbered through them.
     recibo_efectivo_suffix   = models.CharField(max_length=5, blank=True, default="")
     recibo_efectivo_baseline = models.IntegerField(default=0)
+    # Atomic counters (numbering redesign, replaces the old DB-scan-based
+    # allocation in invoice_service._next_invoice_number). Each holds the
+    # last number issued for this Emisor+tipo *this calendar year* —
+    # *_counter_year tracks which year that is, so the sequence still resets
+    # to baseline every January like the old suffix-filtered scan did.
+    factura_counter      = models.IntegerField(default=0)
+    factura_counter_year = models.IntegerField(null=True, blank=True)
+    recibo_counter       = models.IntegerField(default=0)
+    recibo_counter_year  = models.IntegerField(null=True, blank=True)
     drive_folder_id  = models.CharField(max_length=200, blank=True)
     activo           = models.BooleanField(default=True)
     created_at       = models.DateTimeField(auto_now_add=True)

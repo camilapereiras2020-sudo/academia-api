@@ -37,6 +37,7 @@ class DocumentoViewSet(ModelViewSet):
 
     @action(detail=False, methods=["post"], url_path="generar")
     def generar(self, request):
+        from django.db import transaction
         from modules.pagos.models import Pago
         from .invoice_service import generate_invoice_for_pago
 
@@ -56,39 +57,48 @@ class DocumentoViewSet(ModelViewSet):
         except Pago.DoesNotExist:
             return Response({"error": "Pago no encontrado"}, status=status.HTTP_404_NOT_FOUND)
 
-        # Idempotent: a non-borrador Documento already means this pago's real
-        # invoice/receipt exists — return it instead of minting a new num_doc
-        # (double-click, retry-after-partial-failure, etc. must not duplicate).
-        existing = pago.documentos.filter(estado="emitida").order_by("-created_at").first()
-        if existing:
-            return Response(DocumentoSerializer(existing).data, status=status.HTTP_200_OK)
+        with transaction.atomic():
+            # Lock the Pago row so two concurrent "generar" calls (double
+            # click, retry after a slow response, or this racing with the
+            # auto-generation path in pagos.views._issue_invoice) can't both
+            # pass the "already has a documento" check before either one
+            # creates it — same select_for_update pattern already used for
+            # the Emisor row in invoice_service.generate_invoice_for_pago.
+            Pago.objects.select_for_update().get(pk=pago.pk)
 
-        try:
-            num_doc, drive_id, tipo = generate_invoice_for_pago(pago)
-        except ValueError as e:
-            # incomplete/misconfigured pago — a predictable client error, not a server fault
-            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-        except Exception as e:
-            return Response(
-                {"error": f"Error generando documento: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            # Idempotent: a non-borrador Documento already means this pago's real
+            # invoice/receipt exists — return it instead of minting a new num_doc
+            # (double-click, retry-after-partial-failure, etc. must not duplicate).
+            existing = pago.documentos.filter(estado="emitida").order_by("-created_at").first()
+            if existing:
+                return Response(DocumentoSerializer(existing).data, status=status.HTTP_200_OK)
+
+            try:
+                num_doc, drive_id, tipo = generate_invoice_for_pago(pago)
+            except ValueError as e:
+                # incomplete/misconfigured pago — a predictable client error, not a server fault
+                return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            except Exception as e:
+                return Response(
+                    {"error": f"Error generando documento: {str(e)}"},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+
+            doc = Documento.objects.create(
+                academia   = request.user.tenant,
+                pago       = pago,
+                tipo       = tipo,
+                nombre     = f"{num_doc}.pdf",
+                num_doc    = num_doc,
+                s3_key     = drive_id,       # Drive file id stored here
+                local_path = "",
+                mime_type  = "application/pdf",
+                estado     = "emitida",
+                emitida_at = timezone.now(),
             )
 
-        doc = Documento.objects.create(
-            academia   = request.user.tenant,
-            pago       = pago,
-            tipo       = tipo,
-            nombre     = f"{num_doc}.pdf",
-            num_doc    = num_doc,
-            s3_key     = drive_id,       # Drive file id stored here
-            local_path = "",
-            mime_type  = "application/pdf",
-            estado     = "emitida",
-            emitida_at = timezone.now(),
-        )
-
-        pago.num_doc = num_doc
-        pago.save(update_fields=["num_doc"])
+            pago.num_doc = num_doc
+            pago.save(update_fields=["num_doc"])
 
         try:
             from .sheets_log import log_emision
