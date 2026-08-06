@@ -22,10 +22,13 @@ def _send_payment_email(pago, num_doc, emisor_nombre="Cami&Co"):
         logger.info("EMAIL_SENDING_ENABLED is off — skipping payment email for pago %s", pago.id)
         return
 
-    if not pago.alumno or not pago.pagador:
+    # An adult alumno who pays for themself (Alumno.es_adulto) may have no
+    # Pagador on file — same fallback as invoice_service._pagador_display_fields.
+    if not pago.alumno or not (pago.pagador or getattr(pago.alumno, "es_adulto", False)):
         return  # incomplete pago — nothing to email yet
 
-    email   = getattr(pago.pagador, "email", "") or ""
+    pagador_obj = pago.pagador or pago.alumno
+    email   = getattr(pagador_obj, "email", "") or ""
     api_key = getattr(settings, "RESEND_API_KEY", "") or ""
     if not email:
         logger.warning("Pago %s: pagador has no email on file — payment confirmation not sent", pago.id)
@@ -37,7 +40,7 @@ def _send_payment_email(pago, num_doc, emisor_nombre="Cami&Co"):
     resend.api_key     = api_key
     metodo_display     = (pago.metodo or "").capitalize()
     alumno_nombre      = pago.alumno.nombre
-    pagador_nombre     = pago.pagador.nombre
+    pagador_nombre     = pagador_obj.nombre
     total_fmt          = "{:,.2f}".format(float(pago.total)).replace(",", "X").replace(".", ",").replace("X", ".")
     nombre_display     = emisor_nombre
 
@@ -288,7 +291,13 @@ class PagoViewSet(ModelViewSet):
         was_pending = serializer.instance.estado_carga == "pendiente_completar"
         pago = serializer.save()
 
-        if was_pending and pago.alumno_id and pago.pagador_id:
+        # An adult alumno who pays for themself (Alumno.es_adulto) may have no
+        # Pagador on file — generate_invoice_for_pago falls back to the
+        # alumno's own contact data in that case, so don't gate completion on
+        # pagador_id alone.
+        if was_pending and pago.alumno_id and (
+            pago.pagador_id or getattr(pago.alumno, "es_adulto", False)
+        ):
             if not pago.emisor_id:
                 pago.emisor = _resolve_emisor(self.request.user.tenant, self.request.data.get("emisor"), pago.marca)
             pago.estado_carga = "completo"

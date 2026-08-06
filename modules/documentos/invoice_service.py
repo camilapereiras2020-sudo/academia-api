@@ -521,6 +521,28 @@ def generate_pdf_bytes(
 
 # ── Main entry point ──────────────────────────────────────────────────────────
 
+def _pagador_display_fields(pagador, alumno):
+    """Returns (nombre, nif, telefono, email) to render on the invoice/recibo.
+    If there's no Pagador on file but the alumno is an adult who pays for
+    themself (Alumno.es_adulto), fall back to the alumno's own contact data
+    instead of leaving the document blank."""
+    if pagador is not None:
+        return (
+            pagador.nombre,
+            getattr(pagador, "nif", "") or "",
+            getattr(pagador, "telefono", "") or "",
+            getattr(pagador, "email", "") or "",
+        )
+    if alumno is not None and getattr(alumno, "es_adulto", False):
+        return (
+            alumno.nombre,
+            getattr(alumno, "dni", "") or "",
+            getattr(alumno, "telefono", "") or "",
+            getattr(alumno, "email", "") or "",
+        )
+    return ("", "", "", "")
+
+
 def generate_invoice_for_pago(pago, tipo="factura"):
     """Generate PDF for a Pago using its Emisor, upload to Drive.
     Returns (num_doc, drive_file_id, tipo_doc). tipo_doc is the authoritative
@@ -529,7 +551,12 @@ def generate_invoice_for_pago(pago, tipo="factura"):
     *this* on the Documento, not their own guess (the `tipo` param above is
     legacy and not used for numbering).
     """
-    if pago.estado_carga == "pendiente_completar" or not pago.alumno_id or not pago.pagador_id:
+    alumno_adulto_sin_pagador = (
+        not pago.pagador_id and pago.alumno_id and getattr(pago.alumno, "es_adulto", False)
+    )
+    if pago.estado_carga == "pendiente_completar" or not pago.alumno_id or (
+        not pago.pagador_id and not alumno_adulto_sin_pagador
+    ):
         raise ValueError(
             f"Pago {pago.id} está incompleto (estado_carga={pago.estado_carga!r}, "
             f"alumno={pago.alumno_id}, pagador={pago.pagador_id}) — "
@@ -545,6 +572,7 @@ def generate_invoice_for_pago(pago, tipo="factura"):
     grupo   = pago.grupo
     extras  = pago.extras or []
     metodo  = pago.metodo or ""
+    pagador_nombre, pagador_nif, pagador_tel, pagador_email = _pagador_display_fields(pagador, alumno)
 
     tipo_doc = tipo_doc_for_metodo(metodo)
     # A bulk-imported draft may already carry a pre-assigned number (e.g. from
@@ -586,10 +614,10 @@ def generate_invoice_for_pago(pago, tipo="factura"):
         academia_email    = getattr(emisor, "email", "") or "",
         academia_cif      = emisor.nif,
         iban              = emisor.iban,
-        pagador_nombre  = pagador.nombre,
-        pagador_nif     = getattr(pagador, "nif",      "") or "",
-        pagador_tel     = getattr(pagador, "telefono", "") or "",
-        pagador_email   = getattr(pagador, "email",    "") or "",
+        pagador_nombre  = pagador_nombre,
+        pagador_nif     = pagador_nif,
+        pagador_tel     = pagador_tel,
+        pagador_email   = pagador_email,
         alumno_nombre   = alumno.nombre,
         grupo_nombre    = grupo.nombre if grupo else "",
         periodo         = pago.periodo,
@@ -633,6 +661,7 @@ def _rerender_documento_pdf(documento, watermark: str = None, subfolder: str = N
     if isinstance(fecha, str):
         fecha = date.fromisoformat(fecha)
     theme = THEME_RANGERS if getattr(emisor, "slug", "") == "rangers" else THEME_CAMIANDCO
+    pagador_nombre, pagador_nif, pagador_tel, pagador_email = _pagador_display_fields(pagador, alumno)
 
     pdf_bytes = generate_pdf_bytes(
         academia_nombre   = emisor.nombre,
@@ -643,10 +672,10 @@ def _rerender_documento_pdf(documento, watermark: str = None, subfolder: str = N
         academia_email    = getattr(emisor, "email", "") or "",
         academia_cif      = emisor.nif,
         iban              = emisor.iban,
-        pagador_nombre  = pagador.nombre if pagador else "",
-        pagador_nif     = getattr(pagador, "nif",      "") or "",
-        pagador_tel     = getattr(pagador, "telefono", "") or "",
-        pagador_email   = getattr(pagador, "email",    "") or "",
+        pagador_nombre  = pagador_nombre,
+        pagador_nif     = pagador_nif,
+        pagador_tel     = pagador_tel,
+        pagador_email   = pagador_email,
         alumno_nombre   = alumno.nombre if alumno else "",
         grupo_nombre    = grupo.nombre if grupo else "",
         periodo         = pago.periodo,

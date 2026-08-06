@@ -45,7 +45,9 @@ def log_emision(documento) -> None:
         documento.emitida_at.strftime("%d/%m/%Y") if documento.emitida_at else "",
         documento.num_doc,
         pago.alumno.nombre if pago and pago.alumno else "",
-        pago.pagador.nombre if pago and pago.pagador else "",
+        (pago.pagador.nombre if pago.pagador else
+         (pago.alumno.nombre if getattr(pago.alumno, "es_adulto", False) else ""))
+        if pago and pago.alumno else "",
         pago.periodo if pago else "",
         str(pago.total) if pago else "",
         pago.metodo if pago else "",

@@ -35,6 +35,7 @@ class Alumno(models.Model):
         null=True, blank=True, related_name="alumnos"
     )
     es_fundae = models.BooleanField(default=False)
+    es_adulto = models.BooleanField(default=False)
     nivel = models.CharField(max_length=10, blank=True)
     notas = models.TextField(blank=True)
     activo = models.BooleanField(default=True)

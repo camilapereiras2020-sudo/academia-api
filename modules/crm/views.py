@@ -165,6 +165,7 @@ class LeadViewSet(ModelViewSet):
             grupo=grupo,
             nivel=lead.nivel_estimado or "",
             notas=lead.notas or "",
+            es_adulto=lead.es_adulto,
         )
 
         lead.alumno = alumno

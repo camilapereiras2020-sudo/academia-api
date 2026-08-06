@@ -33,7 +33,7 @@ class AlumnoSerializer(TenantScopedFKMixin, serializers.ModelSerializer):
             "id", "nombre", "marca", "marca_display", "fecha_nacimiento", "fnac", "telefono", "email", "dni",
             "aviso_cumple_dias", "grupo", "grupo_nombre",
             "grupos_detalle", "pagador", "pagador_nombre", "empresa", "empresa_nombre",
-            "es_fundae", "nivel", "notas", "activo", "created_at",
+            "es_fundae", "es_adulto", "nivel", "notas", "activo", "created_at",
             "foto_url", "nivel_objetivo", "examen_objetivo", "colegio_origen", "idioma_nativo",
             "contacto_emergencia_nombre", "contacto_emergencia_telefono",
         ]

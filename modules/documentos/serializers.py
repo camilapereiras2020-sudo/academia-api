@@ -25,7 +25,10 @@ class DocumentoSerializer(serializers.ModelSerializer):
         if obj.pago:
             return {
                 "alumno": obj.pago.alumno.nombre if obj.pago.alumno else None,
-                "pagador": obj.pago.pagador.nombre if obj.pago.pagador else None,
+                "pagador": (
+                    obj.pago.pagador.nombre if obj.pago.pagador
+                    else (obj.pago.alumno.nombre if obj.pago.alumno and getattr(obj.pago.alumno, "es_adulto", False) else None)
+                ),
                 "periodo": obj.pago.periodo,
                 "total": str(obj.pago.total),
                 "fecha": obj.pago.fecha.isoformat() if obj.pago.fecha else None,

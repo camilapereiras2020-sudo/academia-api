@@ -139,6 +139,7 @@ class AlumnoViewSet(ContactableViaPagadorMixin, ModelViewSet):
             pagador=alumno.pagador,
             empresa=alumno.empresa,
             es_fundae=alumno.es_fundae,
+            es_adulto=alumno.es_adulto,
             nivel=alumno.nivel,
             notas=alumno.notas,
             activo=alumno.activo,
