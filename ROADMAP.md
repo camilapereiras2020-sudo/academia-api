@@ -63,6 +63,19 @@ Feature ideas captured for future work. Not scheduled — this is a backlog, not
 
 ---
 
+## 5. Visual Group Scheduling — Backend Constraint Data (not started, needs design)
+
+**What:** Backend half of the drag-and-drop Timetable Builder feature — full feature spec lives in `academia-frontend/ROADMAP.md` ("Visual Group Scheduling / Timetable Builder"), noted here because the scheduling-constraint data model and conflict-check logic would live in this repo.
+
+**Backend-relevant pieces:**
+- Structured per-student availability constraints (e.g. "only available Tuesdays/Thursdays 19:00-21:00") stored on the student model — not decided yet where/how granular (new model vs. fields on `Alumno`, days-of-week + time-range representation, one-off exceptions vs. recurring only)
+- Slot-conflict validation: given a student + a target group/timeslot, check stored constraints and return a warning/block signal for the frontend to surface before assignment is confirmed
+- Depends on Group CRUD existing in the platform UI first (see frontend roadmap) and likely also needs `Grupo.horarios` (currently an undocumented/always-empty JSONField, see `modules/grupos/models.py`) to gain a real, query-able schedule shape before conflict-checking is possible at all
+
+**Priority:** real feature, needs its own design pass — not a quick build. Noted here so it isn't lost, not scheduled yet.
+
+---
+
 ## Notes
 
 These four ideas overlap: #2 (class page/lesson log) is the natural data source for #3 (homework delivery) and #4 (parent auto-message) — building the class page first would make the other two mostly a matter of wiring up delivery channels to data that already exists.
