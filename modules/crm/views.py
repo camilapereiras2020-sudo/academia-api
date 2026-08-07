@@ -110,9 +110,12 @@ class LeadViewSet(ModelViewSet):
 
     @action(detail=True, methods=["post"], url_path="convertir-alumno")
     def convertir_alumno(self, request, pk=None):
+        from decimal import Decimal, InvalidOperation
+
         from modules.alumnos.models import Alumno
         from modules.pagadores.models import Pagador
         from modules.grupos.models import Grupo
+        from modules.pagos.models import Pago
 
         lead = self.get_object()
 
@@ -129,6 +132,14 @@ class LeadViewSet(ModelViewSet):
         if not all([grupo_id, mensualidad, fecha_inicio]):
             return Response(
                 {"error": "grupo_id, mensualidad y fecha_inicio son obligatorios"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            mensualidad_decimal = Decimal(str(mensualidad))
+        except (InvalidOperation, ValueError, TypeError):
+            return Response(
+                {"error": "mensualidad inválida"},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
@@ -168,6 +179,22 @@ class LeadViewSet(ModelViewSet):
             es_adulto=lead.es_adulto,
         )
 
+        pago = Pago.objects.create(
+            academia=request.user.tenant,
+            marca=lead.marca,
+            pagador=pagador,
+            alumno=alumno,
+            grupo=grupo,
+            periodo=fecha_inicio[:7],
+            mensualidad=mensualidad_decimal,
+            total=mensualidad_decimal,
+            metodo="",
+            estado="pendiente",
+            fecha=fecha_inicio,
+            estado_carga="pendiente_completar",
+            notas="Primer pago generado automáticamente al matricular.",
+        )
+
         lead.alumno = alumno
         lead.etapa = "matriculado"
         lead.save(update_fields=["alumno", "etapa", "updated_at"])
@@ -179,6 +206,7 @@ class LeadViewSet(ModelViewSet):
             "pagador_id": pagador.id,
             "pagador_nombre": pagador.nombre,
             "pagador_autocompletado": lead.es_adulto and lead.pagador_es_alumno,
+            "pago_id": pago.id,
         })
 
 
