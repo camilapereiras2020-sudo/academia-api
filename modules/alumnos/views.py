@@ -80,6 +80,30 @@ class AlumnoViewSet(ContactableViaPagadorMixin, ModelViewSet):
             qs = qs.filter(es_fundae=True)
         return qs
 
+    def _auto_link_self_pay_pagador(self, alumno, serializer):
+        # Self-pay adult with no pagador explicitly supplied in this request:
+        # auto-create/dedup a Pagador from the alumno's own contact data and
+        # link it, instead of requiring the frontend to do a second, separate
+        # (non-atomic) HTTP call. "Explicitly supplied" is checked via
+        # initial_data (the raw request payload), not validated_data, so an
+        # omitted key and an explicit null are both treated as "no pagador".
+        if not alumno.es_adulto:
+            return
+        provided_pagador = serializer.initial_data.get("pagador") if hasattr(serializer, "initial_data") else None
+        if provided_pagador:
+            return
+        if alumno.pagador_id:
+            return
+        from modules.pagadores.services import get_or_create_pagador
+        pagador = get_or_create_pagador(
+            academia=alumno.academia,
+            nombre=alumno.nombre,
+            telefono=alumno.telefono,
+            email=alumno.email,
+        )
+        alumno.pagador = pagador
+        alumno.save(update_fields=["pagador"])
+
     def perform_create(self, serializer):
         # reception can edit existing alumnos and use asignar-grupo/duplicar
         # (which create rows too, but those are explicit, narrower actions) —
@@ -92,9 +116,10 @@ class AlumnoViewSet(ContactableViaPagadorMixin, ModelViewSet):
             provided = serializer.validated_data.get("marca")
             if provided and provided != scope:
                 raise PermissionDenied(f"Solo podés crear alumnos de la marca {scope}.")
-            serializer.save(academia=self.request.user.tenant, marca=scope)
+            alumno = serializer.save(academia=self.request.user.tenant, marca=scope)
         else:
-            serializer.save(academia=self.request.user.tenant)
+            alumno = serializer.save(academia=self.request.user.tenant)
+        self._auto_link_self_pay_pagador(alumno, serializer)
 
     def perform_update(self, serializer):
         scope = marca_scope_for(self.request.user)
@@ -102,9 +127,10 @@ class AlumnoViewSet(ContactableViaPagadorMixin, ModelViewSet):
             provided = serializer.validated_data.get("marca")
             if provided and provided != scope:
                 raise PermissionDenied(f"Solo podés editar alumnos de la marca {scope}.")
-            serializer.save(marca=scope)
+            alumno = serializer.save(marca=scope)
         else:
-            serializer.save()
+            alumno = serializer.save()
+        self._auto_link_self_pay_pagador(alumno, serializer)
 
     def perform_destroy(self, instance):
         if self.request.user.role == "reception":

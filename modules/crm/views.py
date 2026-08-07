@@ -113,7 +113,7 @@ class LeadViewSet(ModelViewSet):
         from decimal import Decimal, InvalidOperation
 
         from modules.alumnos.models import Alumno
-        from modules.pagadores.models import Pagador
+        from modules.pagadores.services import get_or_create_pagador
         from modules.grupos.models import Grupo
         from modules.pagos.models import Pago
 
@@ -154,19 +154,20 @@ class LeadViewSet(ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        # Adult self-pay: auto-create/dedup the Pagador from the alumno's own
+        # data, same as the self-pay path in AlumnoViewSet. For a minor lead,
+        # do NOT guess a payer from lead.nombre_contacto — leave Alumno.pagador
+        # unset and let the front desk fill it in via the unified alumno form
+        # right after matriculation (matriculation already navigates to the
+        # alumno profile, so this is a clean, non-lossy handoff).
+        pagador = None
         if lead.es_adulto and lead.pagador_es_alumno:
-            pagador_nombre = lead.nombre_alumno
-        else:
-            pagador_nombre = lead.nombre_contacto
-
-        pagador, _ = Pagador.objects.get_or_create(
-            academia=request.user.tenant,
-            nombre=pagador_nombre,
-            defaults={
-                "telefono": lead.telefono,
-                "email": lead.email,
-            }
-        )
+            pagador = get_or_create_pagador(
+                academia=request.user.tenant,
+                nombre=lead.nombre_alumno,
+                telefono=lead.telefono,
+                email=lead.email,
+            )
 
         alumno = Alumno.objects.create(
             academia=request.user.tenant,
@@ -203,8 +204,8 @@ class LeadViewSet(ModelViewSet):
             "lead": LeadSerializer(lead).data,
             "alumno_id": alumno.id,
             "alumno_nombre": alumno.nombre,
-            "pagador_id": pagador.id,
-            "pagador_nombre": pagador.nombre,
+            "pagador_id": pagador.id if pagador else None,
+            "pagador_nombre": pagador.nombre if pagador else None,
             "pagador_autocompletado": lead.es_adulto and lead.pagador_es_alumno,
             "pago_id": pago.id,
         })

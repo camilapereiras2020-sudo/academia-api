@@ -12,6 +12,7 @@ class Pagador(models.Model):
     nif = models.CharField(max_length=20, blank=True)
     telefono = models.CharField(max_length=20, blank=True)
     email = models.EmailField(blank=True)
+    direccion = models.CharField(max_length=300, blank=True)
     metodo = models.CharField(max_length=20, choices=METODO_CHOICES, blank=True)
     frecuencia = models.CharField(max_length=20, choices=FRECUENCIA_CHOICES, blank=True)
     iban = models.CharField(max_length=34, blank=True)

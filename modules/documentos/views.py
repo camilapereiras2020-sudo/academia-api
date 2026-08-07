@@ -29,10 +29,13 @@ class DocumentoViewSet(ModelViewSet):
             qs = qs.filter(pago__marca=scope)
         pago = self.request.query_params.get("pago")
         tipo = self.request.query_params.get("tipo")
+        alumno = self.request.query_params.get("alumno")
         if pago:
             qs = qs.filter(pago_id=pago)
         if tipo:
             qs = qs.filter(tipo=tipo)
+        if alumno:
+            qs = qs.filter(pago__alumno_id=alumno)
         return qs
 
     @action(detail=False, methods=["post"], url_path="generar")
