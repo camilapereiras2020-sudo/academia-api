@@ -98,6 +98,43 @@ class LeadViewSet(ModelViewSet):
             "urgentes": urgentes,
         })
 
+    @action(detail=False, methods=["get"], url_path="recordatorios")
+    def recordatorios(self, request):
+        """Leads that need a follow-up decision right now: either a
+        proximo_seguimiento date that has passed, or no logged contact in
+        a while. Backs the login popup — kept separate from `dashboard`
+        (which still drives the reception summary tiles) so each can
+        evolve independently.
+
+        Two reasons, not mutually exclusive per lead:
+        - vencido: proximo_seguimiento was set and it's in the past.
+        - sin_contacto: dias_sin_contacto > 5 (same threshold as the red
+          badge in CRMPage), regardless of whether a seguimiento date was
+          ever set.
+        """
+        qs = Lead.objects.filter(academia=request.user.tenant).exclude(
+            etapa__in=["matriculado", "archivado", "frio"]
+        )
+        scope = marca_scope_for(request.user)
+        if scope:
+            qs = qs.filter(marca=scope)
+
+        leads = []
+        for lead in qs:
+            vencido = lead.seguimiento_vencido
+            sin_contacto = lead.dias_sin_contacto > 5
+            if not (vencido or sin_contacto):
+                continue
+            data = LeadListSerializer(lead).data
+            data["razon"] = "vencido" if vencido else "sin_contacto"
+            leads.append((lead.proximo_seguimiento or lead.created_at.date(), data))
+
+        leads.sort(key=lambda pair: pair[0])
+        return Response({
+            "count": len(leads),
+            "leads": [d for _, d in leads],
+        })
+
     @action(detail=True, methods=["post"], url_path="cambiar-etapa")
     def cambiar_etapa(self, request, pk=None):
         lead = self.get_object()
