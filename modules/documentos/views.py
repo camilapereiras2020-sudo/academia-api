@@ -42,7 +42,7 @@ class DocumentoViewSet(ModelViewSet):
     def generar(self, request):
         from django.db import transaction
         from modules.pagos.models import Pago
-        from .invoice_service import generate_invoice_for_pago
+        from .invoice_service import generate_invoice_pdf_async
 
         pago_id = request.data.get("pago_id")
 
@@ -77,7 +77,7 @@ class DocumentoViewSet(ModelViewSet):
                 return Response(DocumentoSerializer(existing).data, status=status.HTTP_200_OK)
 
             try:
-                num_doc, drive_id, tipo = generate_invoice_for_pago(pago)
+                num_doc, tipo, pdf_bytes, schedule_drive_upload = generate_invoice_pdf_async(pago)
             except ValueError as e:
                 # incomplete/misconfigured pago — a predictable client error, not a server fault
                 return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -93,8 +93,9 @@ class DocumentoViewSet(ModelViewSet):
                 tipo       = tipo,
                 nombre     = f"{num_doc}.pdf",
                 num_doc    = num_doc,
-                s3_key     = drive_id,       # Drive file id stored here
+                s3_key     = "",              # filled in by the background Drive upload below
                 local_path = "",
+                pdf_data   = pdf_bytes,        # authoritative copy — independent of Drive
                 mime_type  = "application/pdf",
                 estado     = "emitida",
                 emitida_at = timezone.now(),
@@ -102,6 +103,10 @@ class DocumentoViewSet(ModelViewSet):
 
             pago.num_doc = num_doc
             pago.save(update_fields=["num_doc"])
+
+        # Outside the transaction (row is now committed) — Drive upload runs
+        # silently in the background and never blocks or fails this request.
+        schedule_drive_upload(doc.id)
 
         try:
             from .sheets_log import log_emision
@@ -115,7 +120,16 @@ class DocumentoViewSet(ModelViewSet):
     def descargar(self, request, pk=None):
         doc = self.get_object()
 
-        # ── Google Drive (new path) ─────────────────────────────────────────
+        # ── Locally stored PDF (primary — always available, independent of
+        # Drive; every document generated since the pdf_data field was added
+        # has this set at generation time) ───────────────────────────────────
+        if doc.pdf_data:
+            response = HttpResponse(bytes(doc.pdf_data), content_type="application/pdf")
+            response["Content-Disposition"] = f'inline; filename="{doc.nombre}"'
+            return response
+
+        # ── Google Drive (legacy path, for documents generated before
+        # pdf_data existed) ─────────────────────────────────────────────────
         if doc.s3_key:
             try:
                 from .invoice_service import download_from_drive

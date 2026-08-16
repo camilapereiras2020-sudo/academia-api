@@ -83,6 +83,12 @@ class Documento(models.Model):
     num_doc    = models.CharField(max_length=30, blank=True)
     s3_key     = models.CharField(max_length=500, blank=True)
     local_path = models.CharField(max_length=500, blank=True)
+    # Authoritative copy of the rendered PDF, stored in the DB at generation
+    # time — independent of Google Drive. s3_key is filled in afterward by a
+    # background upload (best-effort, never blocks/fails generation); until
+    # then, and even if that upload never succeeds, this field alone is
+    # enough to serve the document for download.
+    pdf_data   = models.BinaryField(null=True, blank=True, editable=False)
     mime_type  = models.CharField(max_length=100, default="application/pdf")
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -100,4 +106,9 @@ class Documento(models.Model):
     @property
     def is_issued(self) -> bool:
         """True if this document was ever actually uploaded/sent — never hard-deletable."""
-        return self.estado != "borrador" or bool(self.s3_key) or bool(self.local_path)
+        return (
+            self.estado != "borrador"
+            or bool(self.s3_key)
+            or bool(self.local_path)
+            or bool(self.pdf_data)
+        )

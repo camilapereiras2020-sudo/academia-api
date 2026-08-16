@@ -137,16 +137,17 @@ def _issue_invoice(pago):
             return
 
         try:
-            from modules.documentos.invoice_service import generate_invoice_for_pago
-            num_doc, drive_id, tipo = generate_invoice_for_pago(pago)
+            from modules.documentos.invoice_service import generate_invoice_pdf_async
+            num_doc, tipo, pdf_bytes, schedule_drive_upload = generate_invoice_pdf_async(pago)
             doc = Documento.objects.create(
                 academia   = pago.academia,
                 pago       = pago,
                 tipo       = tipo,
                 nombre     = f"{num_doc}.pdf",
                 num_doc    = num_doc,
-                s3_key     = drive_id,
+                s3_key     = "",              # filled in by the background Drive upload below
                 local_path = "",
+                pdf_data   = pdf_bytes,        # authoritative copy — independent of Drive
                 mime_type  = "application/pdf",
                 estado     = "emitida",
                 emitida_at = timezone.now(),
@@ -161,9 +162,11 @@ def _issue_invoice(pago):
             pago.save(update_fields=["notas"])
             return
 
-    # Outside the lock: email + sheet logging are best-effort side effects,
-    # not part of the duplicate-prevention guarantee, so they shouldn't hold
-    # the Pago row locked while they make external calls.
+    # Outside the lock (row is now committed): Drive upload runs silently in
+    # the background and never blocks or fails invoice generation. Email +
+    # sheet logging are likewise best-effort side effects that shouldn't
+    # hold the Pago row locked while they make external calls.
+    schedule_drive_upload(doc.id)
     try:
         _send_payment_email(pago, num_doc, pago.emisor.nombre)
     except Exception:

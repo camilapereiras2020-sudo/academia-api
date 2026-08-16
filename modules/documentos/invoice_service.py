@@ -4,6 +4,7 @@ Files land in: Drive → <emisor folder> → Facturas {year} → T{n} → {num_d
 """
 import io
 import os
+import threading
 from datetime import date
 
 from reportlab.lib import colors
@@ -543,13 +544,14 @@ def _pagador_display_fields(pagador, alumno):
     return ("", "", "", "")
 
 
-def generate_invoice_for_pago(pago, tipo="factura"):
-    """Generate PDF for a Pago using its Emisor, upload to Drive.
-    Returns (num_doc, drive_file_id, tipo_doc). tipo_doc is the authoritative
-    bucket ("factura"/"recibo" — "efectivo"/cash folds into "recibo" as of
-    the numbering redesign) derived from pago.metodo — callers should store
-    *this* on the Documento, not their own guess (the `tipo` param above is
-    legacy and not used for numbering).
+def _prepare_invoice_pdf(pago, tipo="factura"):
+    """Validate a Pago, allocate its num_doc, and render the PDF bytes.
+    Pure/local — no Google Drive I/O, so it can't fail or block on Drive.
+    Returns (num_doc, tipo_doc, pdf_bytes, fecha, emisor). tipo_doc is the
+    authoritative bucket ("factura"/"recibo" — "efectivo"/cash folds into
+    "recibo" as of the numbering redesign) derived from pago.metodo —
+    callers should store *this* on the Documento, not their own guess (the
+    `tipo` param above is legacy and not used for numbering).
     """
     alumno_adulto_sin_pagador = (
         not pago.pagador_id and pago.alumno_id and getattr(pago.alumno, "es_adulto", False)
@@ -633,12 +635,60 @@ def generate_invoice_for_pago(pago, tipo="factura"):
         theme           = theme,
     )
 
+    return num_doc, tipo_doc, pdf_bytes, fecha, emisor
+
+
+def generate_invoice_for_pago(pago, tipo="factura"):
+    """Generate PDF for a Pago using its Emisor, then upload to Drive
+    synchronously. Returns (num_doc, drive_file_id, tipo_doc).
+
+    This blocks on — and fails if — the Drive upload, so it's only meant for
+    admin/maintenance code (healthcheck.py, fix_missing_invoices.py) that
+    explicitly wants to know Drive's result. User-facing request handlers
+    (documentos.views.generar, pagos.views._issue_invoice) use
+    generate_invoice_pdf_async instead, which never touches Drive inline.
+    """
+    num_doc, tipo_doc, pdf_bytes, fecha, emisor = _prepare_invoice_pdf(pago, tipo)
+
     # Drive quarter-folder placement follows the actual invoice date, not the
     # billed periodo (a July-dated invoice for June's service goes in T3).
     folder_id = emisor.drive_folder_id or os.environ.get("GOOGLE_DRIVE_FOLDER_ID") or ""
     drive_id  = upload_to_drive(pdf_bytes, f"{num_doc}.pdf", fecha.year, fecha.month, folder_id)
 
     return num_doc, drive_id, tipo_doc
+
+
+def generate_invoice_pdf_async(pago, tipo="factura"):
+    """Like generate_invoice_for_pago, but never touches Google Drive inline
+    — the PDF is generated and returned immediately, and Drive upload is
+    scheduled to run afterward on a background thread, silently.
+
+    Returns (num_doc, tipo_doc, pdf_bytes, schedule_drive_upload).
+    `schedule_drive_upload(documento_id)` kicks off the Drive upload in the
+    background and, on success, patches that Documento's s3_key once it
+    finishes; on failure it just logs and leaves s3_key blank — the
+    Documento is already fully usable via its stored pdf_data regardless.
+    Callers must call schedule_drive_upload only after the Documento row
+    has been created *and committed* (e.g. outside any surrounding
+    transaction.atomic() block), so the background thread's own DB
+    connection can see it.
+    """
+    num_doc, tipo_doc, pdf_bytes, fecha, emisor = _prepare_invoice_pdf(pago, tipo)
+    folder_id = emisor.drive_folder_id or os.environ.get("GOOGLE_DRIVE_FOLDER_ID") or ""
+    filename  = f"{num_doc}.pdf"
+
+    def schedule_drive_upload(documento_id):
+        def _worker():
+            try:
+                drive_id = upload_to_drive(pdf_bytes, filename, fecha.year, fecha.month, folder_id)
+                from modules.documentos.models import Documento
+                Documento.objects.filter(pk=documento_id).update(s3_key=drive_id)
+            except Exception as e:
+                print(f"[invoice] background Drive upload failed for documento {documento_id}: {e}")
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    return num_doc, tipo_doc, pdf_bytes, schedule_drive_upload
 
 
 def _rerender_documento_pdf(documento, watermark: str = None, subfolder: str = None) -> str:
