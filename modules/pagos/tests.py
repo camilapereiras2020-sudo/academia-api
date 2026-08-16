@@ -241,6 +241,54 @@ class DraftCompletionFlowTests(TestCase):
         # confirms the reserved number path, not a freshly allocated one
         self.assertEqual(self.draft.num_doc, "CC252-26")
 
+    @patch("modules.documentos.sheets_log.log_emision")
+    @patch("modules.pagos.views._send_payment_email")
+    @patch("modules.documentos.invoice_service.upload_to_drive")
+    def test_create_pago_for_adult_alumno_without_pagador_succeeds(self, mock_upload, mock_email, mock_log_emision):
+        mock_upload.return_value = "FAKE_DRIVE_ID"
+        adulto = Alumno.objects.create(academia=self.user, nombre="Adulto Autopagador", es_adulto=True)
+
+        resp = self.client.post(
+            "/api/v1/pagos/",
+            {
+                "alumno": adulto.id, "pagador": None,
+                "periodo": "2026-08", "total": 50, "mensualidad": 50, "descuento": 0,
+                "metodo": "transferencia", "marca": "cami_and_co", "estado": "pagado",
+                "fecha": "2026-08-16",
+            },
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 201, resp.content)
+
+        pago = Pago.objects.get(id=resp.json()["id"])
+        self.assertIsNone(pago.pagador_id)
+        self.assertNotEqual(pago.num_doc, "")
+        self.assertNotIn("Factura no generada", pago.notas or "")
+        self.assertTrue(pago.documentos.filter(estado="emitida").exists())
+
+    def test_create_pago_for_non_adult_alumno_without_pagador_creates_pago_but_skips_invoice(self):
+        # Contrast case: a minor with no pagador still gets the Pago row (so the
+        # data isn't lost), but invoice generation can't proceed without someone
+        # to bill — that's the boundary the adult/es_adulto exception carves out.
+        menor = Alumno.objects.create(academia=self.user, nombre="Menor Sin Pagador", es_adulto=False)
+
+        resp = self.client.post(
+            "/api/v1/pagos/",
+            {
+                "alumno": menor.id, "pagador": None,
+                "periodo": "2026-08", "total": 50, "mensualidad": 50, "descuento": 0,
+                "metodo": "transferencia", "marca": "cami_and_co", "estado": "pagado",
+                "fecha": "2026-08-16",
+            },
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 201, resp.content)
+
+        pago = Pago.objects.get(id=resp.json()["id"])
+        self.assertIsNone(pago.pagador_id)
+        self.assertIn("Factura no generada", pago.notas or "")
+        self.assertFalse(pago.documentos.filter(estado="emitida").exists())
+
     def test_patch_without_alumno_pagador_stays_pending(self):
         resp = self.client.patch(
             f"/api/v1/pagos/{self.draft.id}/",
