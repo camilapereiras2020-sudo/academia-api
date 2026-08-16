@@ -48,6 +48,7 @@ LOCAL_APPS = [
     "modules.tarifas",
     "modules.whatsapp_reply",
     "modules.dashboard",
+    "modules.niveles",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
