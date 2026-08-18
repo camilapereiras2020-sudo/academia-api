@@ -17,6 +17,7 @@ urlpatterns = [
     path("api/v1/", include("modules.empresas.urls")),
     path(API_PREFIX + "clases/", include("modules.clases.urls")),
     path(API_PREFIX + "tarifas/", include("modules.tarifas.urls")),
+    path(API_PREFIX + "niveles/", include("modules.niveles.urls")),
     path(API_PREFIX + "whatsapp-reply/", include("modules.whatsapp_reply.urls")),
     path(API_PREFIX + "dashboard/", include("modules.dashboard.urls")),
 ]
