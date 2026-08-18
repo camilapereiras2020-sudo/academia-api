@@ -46,6 +46,7 @@ LOCAL_APPS = [
     "modules.empresas",
     "modules.clases",
     "modules.tarifas",
+    "modules.niveles",
     "modules.whatsapp_reply",
     "modules.dashboard",
 ]
