@@ -15,6 +15,7 @@ class Grupo(models.Model):
     marca = models.CharField(max_length=20, choices=MARCA_CHOICES, default="rangers_academy")
     nombre = models.CharField(max_length=200)
     nivel = models.CharField(max_length=50, blank=True)
+    profesor = models.CharField(max_length=200, blank=True)
     tipo_cobro = models.CharField(max_length=10, choices=TIPO_COBRO_CHOICES, default="mensual")
     tarifa = models.DecimalField(max_digits=8, decimal_places=2, default=0)
     precio_hora = models.DecimalField(max_digits=8, decimal_places=2, default=0)
