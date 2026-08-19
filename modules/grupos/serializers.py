@@ -11,7 +11,7 @@ class GrupoSerializer(serializers.ModelSerializer):
     class Meta:
         model = Grupo
         fields = [
-            "id", "nombre", "marca", "marca_display", "nivel", "tipo_cobro", "tipo_cobro_display",
+            "id", "nombre", "marca", "marca_display", "nivel", "profesor", "tipo_cobro", "tipo_cobro_display",
             "tarifa", "precio_hora", "aula", "color_idx", "horarios",
             "alumnos_count", "created_at",
         ]
