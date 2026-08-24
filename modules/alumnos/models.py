@@ -22,10 +22,10 @@ class Alumno(models.Model):
     email = models.EmailField(blank=True)
     dni = models.CharField(max_length=20, blank=True)
     aviso_cumple_dias = models.PositiveIntegerField(null=True, blank=True)
-    grupo = models.ForeignKey(
-        "grupos.Grupo", on_delete=models.SET_NULL,
-        null=True, blank=True, related_name="alumnos"
-    )
+    # Many-to-many: a student can attend more than one class per week (e.g.
+    # Cami's Tuesday group AND Cande's Thursday group). Was a single FK
+    # until the Horario builder needed to support that.
+    grupos = models.ManyToManyField("grupos.Grupo", blank=True, related_name="alumnos")
     pagador = models.ForeignKey(
         "pagadores.Pagador", on_delete=models.SET_NULL,
         null=True, blank=True, related_name="alumnos"

@@ -170,7 +170,8 @@ class DraftCompletionFlowTests(TestCase):
             factura_prefix="CC", recibo_prefix="RE",
         )
         self.grupo = Grupo.objects.create(academia=self.user, nombre="Grupo A", nivel="B1", tarifa=50)
-        self.alumno = Alumno.objects.create(academia=self.user, nombre="Juan Lopez", grupo=self.grupo)
+        self.alumno = Alumno.objects.create(academia=self.user, nombre="Juan Lopez")
+        self.alumno.grupos.add(self.grupo)
         self.pagador = Pagador.objects.create(academia=self.user, nombre="Juan Lopez")
 
         self.draft = Pago.objects.create(

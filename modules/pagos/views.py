@@ -231,9 +231,11 @@ class PagoViewSet(ModelViewSet):
         alumnos_all_qs = Alumno.objects.filter(academia=request.user.tenant)
         if scope:
             alumnos_all_qs = alumnos_all_qs.filter(marca=scope)
-        alumnos_qs   = alumnos_all_qs.values_list("id", "nombre", "grupo_id")
-        alumno_candidates = [(aid, nombre) for aid, nombre, _ in alumnos_qs]
-        grupo_by_alumno   = {aid: grupo_id for aid, _, grupo_id in alumnos_qs}
+        alumnos_qs = alumnos_all_qs.prefetch_related("grupos")
+        alumno_candidates = [(a.id, a.nombre) for a in alumnos_qs]
+        # A student can be in more than one class now — the suggestion only
+        # needs *a* plausible grupo, so we just take the first membership.
+        grupo_by_alumno = {a.id: a.grupos.all()[0].id for a in alumnos_qs if a.grupos.all()}
         pagadores_qs = Pagador.objects.filter(academia=request.user.tenant)
         if scope:
             pagadores_qs = pagadores_qs.filter(alumnos__marca=scope).distinct()

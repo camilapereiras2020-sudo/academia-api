@@ -248,14 +248,18 @@ def main():
                     patch_fields["nivel"] = nivel
                 if pagador_id is not None and pagador_id != existing.get("pagador"):
                     patch_fields["pagador"] = pagador_id
-                if grupo_id is not None and grupo_id != existing.get("grupo"):
-                    patch_fields["grupo"] = grupo_id
                 if args.marca != existing.get("marca"):
                     patch_fields["marca"] = args.marca
 
-                if patch_fields:
+                existing_grupo_ids = {g["grupo"] for g in (existing.get("grupos_detalle") or [])}
+                grupo_needs_link = grupo_id is not None and grupo_id not in existing_grupo_ids
+
+                if patch_fields or grupo_needs_link:
                     if not args.dry_run:
-                        api.patch(f"alumnos/{existing['id']}/", patch_fields)
+                        if patch_fields:
+                            api.patch(f"alumnos/{existing['id']}/", patch_fields)
+                        if grupo_needs_link:
+                            api.post(f"alumnos/{existing['id']}/agregar-grupo/", {"grupo_id": grupo_id})
                     updated += 1
                 else:
                     unchanged += 1
@@ -274,8 +278,9 @@ def main():
                     "aviso_cumple_dias": int(aviso) if aviso.isdigit() else None,
                     "notas": _cell(row, COL_NOTAS_ALUMNO),
                     "pagador": pagador_id,
-                    "grupo": grupo_id,
                 })
+                if grupo_id is not None:
+                    api.post(f"alumnos/{alumno['id']}/agregar-grupo/", {"grupo_id": grupo_id})
                 alumnos_full[_norm(nombre_alumno)] = alumno
             else:
                 alumnos_full[_norm(nombre_alumno)] = {"id": -1}

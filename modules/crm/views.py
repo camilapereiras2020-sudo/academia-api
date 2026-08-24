@@ -211,11 +211,11 @@ class LeadViewSet(ModelViewSet):
             nombre=lead.nombre_alumno,
             marca=lead.marca,
             pagador=pagador,
-            grupo=grupo,
             nivel=lead.nivel_estimado or "",
             notas=lead.notas or "",
             es_adulto=lead.es_adulto,
         )
+        alumno.grupos.add(grupo)
 
         pago = Pago.objects.create(
             academia=request.user.tenant,

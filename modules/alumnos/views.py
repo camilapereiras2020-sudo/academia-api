@@ -46,8 +46,8 @@ class AlumnoViewSet(ContactableViaPagadorMixin, ModelViewSet):
 
     def get_queryset(self):
         qs = Alumno.objects.filter(academia=self.request.user.tenant).select_related(
-            "pagador", "grupo", "empresa"
-        )
+            "pagador", "empresa"
+        ).prefetch_related("grupos")
         scope = marca_scope_for(self.request.user)
         if scope:
             qs = qs.filter(marca=scope)
@@ -67,7 +67,7 @@ class AlumnoViewSet(ContactableViaPagadorMixin, ModelViewSet):
                 Q(pagador__nombre__icontains=search)
             )
         if grupo:
-            qs = qs.filter(grupo_id=grupo)
+            qs = qs.filter(grupos__id=grupo).distinct()
         if empresa:
             qs = qs.filter(empresa_id=empresa)
         if es_fundae is not None:
@@ -137,20 +137,36 @@ class AlumnoViewSet(ContactableViaPagadorMixin, ModelViewSet):
             raise PermissionDenied("No tenés permiso para eliminar alumnos.")
         instance.delete()
 
-    @action(detail=True, methods=["post"], url_path="asignar-grupo")
-    def asignar_grupo(self, request, pk=None):
+    @action(detail=True, methods=["post"], url_path="agregar-grupo")
+    def agregar_grupo(self, request, pk=None):
+        """Add this alumno to one more class, without touching any of their other
+        memberships — a student can be in Cami's Tuesday group AND Cande's Thursday
+        group at the same time (the Horario builder's drag-to-assign relies on this
+        being additive, not a replace)."""
         alumno = self.get_object()
         grupo_id = request.data.get("grupo_id")
-        if grupo_id:
-            from modules.grupos.models import Grupo
-            try:
-                grupo = Grupo.objects.get(id=grupo_id, academia=request.user.tenant)
-            except Grupo.DoesNotExist:
-                return Response({"error": "Grupo no encontrado"}, status=status.HTTP_404_NOT_FOUND)
-            alumno.grupo = grupo
-        else:
-            alumno.grupo = None
-        alumno.save(update_fields=["grupo"])
+        if not grupo_id:
+            return Response({"error": "Falta grupo_id"}, status=status.HTTP_400_BAD_REQUEST)
+        from modules.grupos.models import Grupo
+        try:
+            grupo = Grupo.objects.get(id=grupo_id, academia=request.user.tenant)
+        except Grupo.DoesNotExist:
+            return Response({"error": "Grupo no encontrado"}, status=status.HTTP_404_NOT_FOUND)
+        if grupo.marca != alumno.marca:
+            return Response(
+                {"error": f"{alumno.nombre} es de {alumno.get_marca_display()} — '{grupo.nombre}' es de {grupo.get_marca_display()}."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        alumno.grupos.add(grupo)
+        return Response(self.get_serializer(alumno).data)
+
+    @action(detail=True, methods=["post"], url_path="quitar-grupo")
+    def quitar_grupo(self, request, pk=None):
+        alumno = self.get_object()
+        grupo_id = request.data.get("grupo_id")
+        if not grupo_id:
+            return Response({"error": "Falta grupo_id"}, status=status.HTTP_400_BAD_REQUEST)
+        alumno.grupos.remove(grupo_id)
         return Response(self.get_serializer(alumno).data)
 
     @action(detail=True, methods=["post"], url_path="duplicar")
@@ -161,7 +177,6 @@ class AlumnoViewSet(ContactableViaPagadorMixin, ModelViewSet):
             nombre=f"{alumno.nombre} (copia)",
             marca=alumno.marca,
             fecha_nacimiento=alumno.fecha_nacimiento,
-            grupo=alumno.grupo,
             pagador=alumno.pagador,
             empresa=alumno.empresa,
             es_fundae=alumno.es_fundae,
@@ -170,6 +185,7 @@ class AlumnoViewSet(ContactableViaPagadorMixin, ModelViewSet):
             notas=alumno.notas,
             activo=alumno.activo,
         )
+        nuevo.grupos.set(alumno.grupos.all())
         return Response(self.get_serializer(nuevo).data, status=status.HTTP_201_CREATED)
 
     @action(detail=False, methods=["get"], url_path="cumpleanos")

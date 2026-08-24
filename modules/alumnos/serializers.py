@@ -8,30 +8,30 @@ from modules.empresas.models import Empresa
 
 
 class AlumnoSerializer(TenantScopedFKMixin, serializers.ModelSerializer):
-    tenant_scoped_fields = {"grupo": Grupo, "pagador": Pagador, "empresa": Empresa}
+    tenant_scoped_fields = {"pagador": Pagador, "empresa": Empresa}
     pagador_nombre = serializers.CharField(source="pagador.nombre", read_only=True, default="")
-    grupo_nombre = serializers.CharField(source="grupo.nombre", read_only=True, default="")
     empresa_nombre = serializers.CharField(source="empresa.nombre", read_only=True, default="")
     # fnac is the frontend alias for fecha_nacimiento
     fnac = serializers.DateField(source="fecha_nacimiento", required=False, allow_null=True)
-    # grupos_detalle wraps the single grupo FK in the array shape the frontend expects
+    # One entry per class this alumno is enrolled in (a student can attend
+    # more than one). Read-only here — membership is managed one class at a
+    # time via the agregar-grupo/quitar-grupo actions on AlumnoViewSet, not
+    # by PATCHing this field, so a save from an unrelated form can't
+    # accidentally wipe out other memberships.
     grupos_detalle = serializers.SerializerMethodField()
     marca_display = serializers.CharField(source="get_marca_display", read_only=True)
 
     def get_grupos_detalle(self, obj):
-        if not obj.grupo_id:
-            return []
-        return [{
-            "grupo": obj.grupo_id,
-            "grupo_nombre": obj.grupo.nombre if obj.grupo else "",
-            "horarios": [],
-        }]
+        return [
+            {"grupo": g.id, "grupo_nombre": g.nombre, "horarios": g.horarios}
+            for g in obj.grupos.all().order_by("nombre")
+        ]
 
     class Meta:
         model = Alumno
         fields = [
             "id", "nombre", "marca", "marca_display", "fecha_nacimiento", "fnac", "telefono", "email", "dni",
-            "aviso_cumple_dias", "grupo", "grupo_nombre",
+            "aviso_cumple_dias",
             "grupos_detalle", "pagador", "pagador_nombre", "empresa", "empresa_nombre",
             "es_fundae", "es_adulto", "nivel", "notas", "activo", "created_at",
             "foto_url", "nivel_objetivo", "examen_objetivo", "colegio_origen", "idioma_nativo",
@@ -47,8 +47,8 @@ class AlumnoReceptionSerializer(AlumnoSerializer):
     es_fundae, activo, fecha_nacimiento) is intentionally left out."""
 
     class Meta(AlumnoSerializer.Meta):
-        fields = ["id", "nombre", "telefono", "email", "marca", "marca_display", "grupo", "grupo_nombre", "grupos_detalle"]
-        read_only_fields = ["id", "marca", "marca_display", "grupo", "grupo_nombre", "grupos_detalle"]
+        fields = ["id", "nombre", "telefono", "email", "marca", "marca_display", "grupos_detalle"]
+        read_only_fields = ["id", "marca", "marca_display", "grupos_detalle"]
 
 
 class FechaImportanteSerializer(TenantScopedFKMixin, serializers.ModelSerializer):
