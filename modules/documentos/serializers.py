@@ -1,5 +1,22 @@
 from rest_framework import serializers
-from .models import Documento
+from .models import Documento, Emisor
+
+
+class EmisorSerializer(serializers.ModelSerializer):
+    """Legal/billing/contact data for one brand's issuing entity (Cami&Co or
+    Rangers Academy) — this is what invoice_service actually reads when
+    generating a factura/recibo. Numbering-critical fields (prefixes,
+    baselines, atomic counters) and drive_folder_id are deliberately left
+    read-only here: this is a settings form for a person, not a place to
+    accidentally break invoice sequencing or AEAT numbering continuity."""
+
+    class Meta:
+        model = Emisor
+        fields = [
+            "id", "slug", "nombre", "autonoma", "nif", "direccion", "ciudad",
+            "telefono", "email", "iban", "factura_prefix", "recibo_prefix", "activo",
+        ]
+        read_only_fields = ["id", "slug", "factura_prefix", "recibo_prefix", "activo"]
 
 
 class DocumentoSerializer(serializers.ModelSerializer):

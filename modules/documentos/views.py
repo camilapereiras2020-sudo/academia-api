@@ -8,9 +8,31 @@ from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 
-from modules.authentication.rbac import marca_scope_for
-from .models import Documento
-from .serializers import DocumentoSerializer
+from modules.authentication.rbac import marca_scope_for, NotReception
+from modules.pagos.views import MARCA_TO_EMISOR_SLUG
+from .models import Documento, Emisor
+from .serializers import DocumentoSerializer, EmisorSerializer
+
+
+class EmisorViewSet(ModelViewSet):
+    """Settings page's "Datos de facturación" — one row per brand (Cami&Co /
+    Rangers Academy), each with its own legal name, NIF, address, and contact
+    info, since they're two separate billing identities sharing one app.
+    No create/destroy: these two rows are fixed (seeded via
+    seed_emisores.py) — only editing the legal/contact fields is exposed
+    here, never the invoice-numbering internals (see EmisorSerializer)."""
+    serializer_class   = EmisorSerializer
+    http_method_names  = ["get", "patch", "head", "options"]
+    # Legal/billing data — not reception's concern (mirrors Configuración's
+    # existing "Datos de la academia" section, which is owner/co_manager only).
+    permission_classes = [permissions.IsAuthenticated, NotReception]
+
+    def get_queryset(self):
+        qs = Emisor.objects.filter(academia=self.request.user.tenant, activo=True)
+        scope = marca_scope_for(self.request.user)
+        if scope:
+            qs = qs.filter(slug=MARCA_TO_EMISOR_SLUG.get(scope))
+        return qs
 
 
 class DocumentoViewSet(ModelViewSet):
