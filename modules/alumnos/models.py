@@ -24,8 +24,11 @@ class Alumno(models.Model):
     aviso_cumple_dias = models.PositiveIntegerField(null=True, blank=True)
     # Many-to-many: a student can attend more than one class per week (e.g.
     # Cami's Tuesday group AND Cande's Thursday group). Was a single FK
-    # until the Horario builder needed to support that.
-    grupos = models.ManyToManyField("grupos.Grupo", blank=True, related_name="alumnos")
+    # until the Horario builder needed to support that. Goes through
+    # Inscripcion (below) so each membership can carry its own personal
+    # hora_inicio/hora_fin — not every student in a class stays the full
+    # session (someone might come 17:00-18:00 of a 17:00-19:00 class).
+    grupos = models.ManyToManyField("grupos.Grupo", through="Inscripcion", blank=True, related_name="alumnos")
     pagador = models.ForeignKey(
         "pagadores.Pagador", on_delete=models.SET_NULL,
         null=True, blank=True, related_name="alumnos"
@@ -54,6 +57,30 @@ class Alumno(models.Model):
 
     def __str__(self):
         return self.nombre
+
+
+class Inscripcion(models.Model):
+    """Through model for Alumno<->Grupo membership. hora_inicio/hora_fin let
+    one student attend a partial window of the class's own session — e.g.
+    the class runs 17:00-19:00 but this student only comes 17:00-18:00.
+    Both null means "the full class session" (Grupo's own horarios), which
+    is what every existing membership defaults to.
+
+    A grupo meeting on more than one day currently applies this same
+    personal window to every day it meets — there's no per-day override.
+    In practice every seeded Grupo meets once a week, so this hasn't been a
+    real constraint; revisit if that changes."""
+    alumno = models.ForeignKey(Alumno, on_delete=models.CASCADE, related_name="inscripciones")
+    grupo = models.ForeignKey("grupos.Grupo", on_delete=models.CASCADE, related_name="inscripciones")
+    hora_inicio = models.TimeField(null=True, blank=True)
+    hora_fin = models.TimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ("alumno", "grupo")
+
+    def __str__(self):
+        return f"{self.alumno} — {self.grupo}"
 
 
 class FechaImportante(models.Model):

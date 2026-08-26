@@ -1,3 +1,4 @@
+from datetime import time as time_cls
 
 from rest_framework import permissions, status
 from rest_framework.decorators import action
@@ -7,7 +8,7 @@ from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 from modules.authentication.rbac import marca_scope_for, NotReception
 from modules.core.mixins import ContactableViaPagadorMixin
-from .models import Alumno, FechaImportante, NotaAlumno, DatoSalud, ConsentimientoAlumno
+from .models import Alumno, FechaImportante, NotaAlumno, DatoSalud, ConsentimientoAlumno, Inscripcion
 from .serializers import (
     AlumnoSerializer, AlumnoReceptionSerializer,
     FechaImportanteSerializer, NotaAlumnoSerializer,
@@ -17,6 +18,38 @@ from .services import alumnos_con_cumpleanos_proximos
 
 MAX_FOTO_BYTES = 5 * 1024 * 1024
 FOTO_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
+
+
+def _parse_hora(value):
+    """"HH:MM" -> time, or None (missing/blank/invalid all mean "no personal
+    override" — i.e. the student attends the full class session)."""
+    if not value:
+        return None
+    try:
+        h, m = value.split(":")
+        return time_cls(int(h), int(m))
+    except (ValueError, AttributeError, TypeError):
+        return None
+
+
+def _validar_horario_personal(grupo, hora_inicio, hora_fin):
+    """A student's personal window has to be a sub-range of the class's own
+    session — arriving late or leaving early is fine, attending a
+    completely different time isn't (that's a different class, not a
+    personal-time override)."""
+    if hora_inicio is None and hora_fin is None:
+        return None
+    if hora_inicio is None or hora_fin is None:
+        return "Indica hora de inicio y de fin (o deja las dos en blanco para usar el horario completo de la clase)."
+    if hora_inicio >= hora_fin:
+        return "La hora de inicio debe ser anterior a la hora de fin."
+    if not grupo.horarios:
+        return None
+    min_ini = min(h["ini"] for h in grupo.horarios)
+    max_fin = max(h["fin"] for h in grupo.horarios)
+    if hora_inicio.strftime("%H:%M") < min_ini or hora_fin.strftime("%H:%M") > max_fin:
+        return f"El horario personal debe caer dentro del horario de la clase ({min_ini}–{max_fin})."
+    return None
 
 
 class TenantScopedForAlumnoMixin:
@@ -157,7 +190,12 @@ class AlumnoViewSet(ContactableViaPagadorMixin, ModelViewSet):
                 {"error": f"{alumno.nombre} es de {alumno.get_marca_display()} — '{grupo.nombre}' es de {grupo.get_marca_display()}."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        alumno.grupos.add(grupo)
+        hora_inicio = _parse_hora(request.data.get("hora_inicio"))
+        hora_fin = _parse_hora(request.data.get("hora_fin"))
+        error = _validar_horario_personal(grupo, hora_inicio, hora_fin)
+        if error:
+            return Response({"error": error}, status=status.HTTP_400_BAD_REQUEST)
+        alumno.grupos.add(grupo, through_defaults={"hora_inicio": hora_inicio, "hora_fin": hora_fin})
         return Response(self.get_serializer(alumno).data)
 
     @action(detail=True, methods=["post"], url_path="quitar-grupo")
@@ -167,6 +205,31 @@ class AlumnoViewSet(ContactableViaPagadorMixin, ModelViewSet):
         if not grupo_id:
             return Response({"error": "Falta grupo_id"}, status=status.HTTP_400_BAD_REQUEST)
         alumno.grupos.remove(grupo_id)
+        return Response(self.get_serializer(alumno).data)
+
+    @action(detail=True, methods=["post"], url_path="horario-personal")
+    def horario_personal(self, request, pk=None):
+        """Set/reset one existing membership's personal window — the
+        drag-resize (or type-the-times-in) path in the Horario builder for a
+        student who doesn't stay the whole class session. Pass hora_inicio/
+        hora_fin as null (or omit them) to reset back to the full class
+        time."""
+        alumno = self.get_object()
+        grupo_id = request.data.get("grupo_id")
+        if not grupo_id:
+            return Response({"error": "Falta grupo_id"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            insc = Inscripcion.objects.select_related("grupo").get(alumno=alumno, grupo_id=grupo_id)
+        except Inscripcion.DoesNotExist:
+            return Response({"error": "El alumno no está en ese grupo."}, status=status.HTTP_404_NOT_FOUND)
+        hora_inicio = _parse_hora(request.data.get("hora_inicio"))
+        hora_fin = _parse_hora(request.data.get("hora_fin"))
+        error = _validar_horario_personal(insc.grupo, hora_inicio, hora_fin)
+        if error:
+            return Response({"error": error}, status=status.HTTP_400_BAD_REQUEST)
+        insc.hora_inicio = hora_inicio
+        insc.hora_fin = hora_fin
+        insc.save(update_fields=["hora_inicio", "hora_fin"])
         return Response(self.get_serializer(alumno).data)
 
     @action(detail=True, methods=["post"], url_path="duplicar")
@@ -185,7 +248,10 @@ class AlumnoViewSet(ContactableViaPagadorMixin, ModelViewSet):
             notas=alumno.notas,
             activo=alumno.activo,
         )
-        nuevo.grupos.set(alumno.grupos.all())
+        for insc in alumno.inscripciones.all():
+            Inscripcion.objects.create(
+                alumno=nuevo, grupo=insc.grupo, hora_inicio=insc.hora_inicio, hora_fin=insc.hora_fin,
+            )
         return Response(self.get_serializer(nuevo).data, status=status.HTTP_201_CREATED)
 
     @action(detail=False, methods=["get"], url_path="cumpleanos")

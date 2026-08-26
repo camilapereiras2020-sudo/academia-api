@@ -22,9 +22,16 @@ class AlumnoSerializer(TenantScopedFKMixin, serializers.ModelSerializer):
     marca_display = serializers.CharField(source="get_marca_display", read_only=True)
 
     def get_grupos_detalle(self, obj):
+        # hora_inicio/hora_fin are this student's PERSONAL window within the
+        # class (null = the full session, i.e. Grupo.horarios as-is) — not
+        # every student in a class stays the whole time.
         return [
-            {"grupo": g.id, "grupo_nombre": g.nombre, "horarios": g.horarios}
-            for g in obj.grupos.all().order_by("nombre")
+            {
+                "grupo": insc.grupo.id, "grupo_nombre": insc.grupo.nombre, "horarios": insc.grupo.horarios,
+                "hora_inicio": insc.hora_inicio.strftime("%H:%M") if insc.hora_inicio else None,
+                "hora_fin": insc.hora_fin.strftime("%H:%M") if insc.hora_fin else None,
+            }
+            for insc in obj.inscripciones.select_related("grupo").order_by("grupo__nombre")
         ]
 
     class Meta:
