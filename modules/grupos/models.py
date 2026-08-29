@@ -32,3 +32,26 @@ class Grupo(models.Model):
 
     def __str__(self):
         return self.nombre
+
+
+class Aula(models.Model):
+    """A lightweight, purely-additive lookup for room names + short codes
+    (A1, A2…). Grupo.aula stays the free-text field it always was — nothing
+    that already reads/writes Grupo.aula changes — this just gives the
+    "+ Nueva clase" flow a place to look up or assign a código per room name,
+    same idea as Profesor.codigo.
+    """
+    academia = models.ForeignKey(User, on_delete=models.CASCADE, related_name="aulas")
+    nombre = models.CharField(max_length=100)
+    codigo = models.CharField(max_length=20, blank=True)
+    activo = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["nombre"]
+        constraints = [
+            models.UniqueConstraint(fields=["academia", "nombre"], name="unique_aula_por_academia_nombre")
+        ]
+
+    def __str__(self):
+        return self.nombre

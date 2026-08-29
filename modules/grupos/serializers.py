@@ -1,7 +1,25 @@
 
 from rest_framework import serializers
-from .models import Grupo
+from .models import Grupo, Aula
 from modules.profesores.models import Profesor
+
+
+class AulaSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Aula
+        fields = ["id", "nombre", "codigo", "activo", "created_at"]
+        read_only_fields = ["id", "created_at"]
+
+    def validate_nombre(self, value):
+        request = self.context.get("request")
+        if request is None:
+            return value
+        qs = Aula.objects.filter(academia=request.user.tenant, nombre=value)
+        if self.instance is not None:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError("Ya existe un aula con ese nombre.")
+        return value
 
 
 class GrupoSerializer(serializers.ModelSerializer):

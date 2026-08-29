@@ -5,7 +5,7 @@ from .models import Profesor
 class ProfesorSerializer(serializers.ModelSerializer):
     class Meta:
         model = Profesor
-        fields = ["id", "nombre", "es_suplente", "orden", "activo", "created_at"]
+        fields = ["id", "nombre", "codigo", "es_suplente", "orden", "activo", "created_at"]
         read_only_fields = ["id", "created_at"]
 
     def validate_nombre(self, value):
