@@ -7,6 +7,9 @@ User = get_user_model()
 class Profesor(models.Model):
     academia = models.ForeignKey(User, on_delete=models.CASCADE, related_name="profesores")
     nombre = models.CharField(max_length=100)
+    # Short fixed identifier (P1, P2…) — auto-assigned at creation (see
+    # ProfesorViewSet.perform_create), editable afterward like any other field.
+    codigo = models.CharField(max_length=20, blank=True)
     es_suplente = models.BooleanField(default=False)
     orden = models.PositiveSmallIntegerField(default=0)
     activo = models.BooleanField(default=True)

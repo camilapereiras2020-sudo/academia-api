@@ -17,4 +17,13 @@ class ProfesorViewSet(ModelViewSet):
         return qs
 
     def perform_create(self, serializer):
-        serializer.save(academia=self.request.user.tenant)
+        codigo = serializer.validated_data.get("codigo") or self._next_codigo()
+        serializer.save(academia=self.request.user.tenant, codigo=codigo)
+
+    def _next_codigo(self):
+        # Simple "P{n}" sequence per tenant — fine at this scale (a handful of
+        # teachers, created one at a time through the UI, not a bulk-import
+        # path); no locking, so a genuine simultaneous double-create could in
+        # theory hand out the same number, same tradeoff as Profesor.orden.
+        existing = Profesor.objects.filter(academia=self.request.user.tenant).count()
+        return f"P{existing + 1}"
