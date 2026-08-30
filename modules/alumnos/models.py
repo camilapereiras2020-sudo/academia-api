@@ -140,6 +140,7 @@ class ConsentimientoAlumno(models.Model):
         ("autorizacion_imagen", "Autorización de imagen"),
         ("proteccion_datos", "Protección de datos"),
         ("matricula", "Matrícula"),
+        ("politica_cancelacion", "Política de cancelación"),
     ]
     alumno = models.ForeignKey(Alumno, on_delete=models.CASCADE, related_name="consentimientos")
     tipo = models.CharField(max_length=25, choices=TIPO_CHOICES)

@@ -15,6 +15,8 @@ from .serializers import (
     ConsentimientoAlumnoSerializer, DatoSaludSerializer,
 )
 from .services import alumnos_con_cumpleanos_proximos
+from django.http import HttpResponse
+from modules.documentos.legal_docs_service import RENDERERS
 
 MAX_FOTO_BYTES = 5 * 1024 * 1024
 FOTO_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
@@ -76,6 +78,24 @@ class AlumnoViewSet(ContactableViaPagadorMixin, ModelViewSet):
         if self.request.user.role == "reception":
             return AlumnoReceptionSerializer
         return AlumnoSerializer
+
+    @action(detail=True, methods=["get"], url_path="documento-legal/(?P<tipo>[^/.]+)")
+    def documento_legal(self, request, pk=None, tipo=None):
+        """Print-ready PDF for one legal document (consentimiento de imagen /
+        política de cancelación), pre-filled with this alumno's real data.
+        Reception-accessible on purpose — this is a front-desk/enrollment
+        task, same access level as generating an invoice."""
+        alumno = self.get_object()
+        renderer = RENDERERS.get(tipo)
+        if renderer is None:
+            return Response(
+                {"error": f"Tipo de documento desconocido: {tipo!r}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        pdf_bytes = renderer(alumno)
+        response = HttpResponse(pdf_bytes, content_type="application/pdf")
+        response["Content-Disposition"] = f'inline; filename="{tipo}-{alumno.id}.pdf"'
+        return response
 
     def get_queryset(self):
         qs = Alumno.objects.filter(academia=self.request.user.tenant).select_related(
