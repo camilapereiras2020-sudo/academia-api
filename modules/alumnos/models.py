@@ -42,6 +42,11 @@ class Alumno(models.Model):
     nivel = models.CharField(max_length=10, blank=True)
     notas = models.TextField(blank=True)
     activo = models.BooleanField(default=True)
+    # Set together when an alumno is marked as no longer enrolled (see
+    # AlumnoViewSet — the "marcar ex-alumno" flow on the frontend clears
+    # both back out on reactivation).
+    motivo_baja = models.TextField(blank=True)
+    fecha_baja = models.DateField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     foto_url = models.CharField(max_length=500, blank=True)
