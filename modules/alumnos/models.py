@@ -42,6 +42,11 @@ class Alumno(models.Model):
     nivel = models.CharField(max_length=10, blank=True)
     notas = models.TextField(blank=True)
     activo = models.BooleanField(default=True)
+    # Set together when an alumno is marked as no longer enrolled (see
+    # AlumnoViewSet — the "marcar ex-alumno" flow on the frontend clears
+    # both back out on reactivation).
+    motivo_baja = models.TextField(blank=True)
+    fecha_baja = models.DateField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     foto_url = models.CharField(max_length=500, blank=True)
@@ -140,6 +145,7 @@ class ConsentimientoAlumno(models.Model):
         ("autorizacion_imagen", "Autorización de imagen"),
         ("proteccion_datos", "Protección de datos"),
         ("matricula", "Matrícula"),
+        ("politica_cancelacion", "Política de cancelación"),
     ]
     alumno = models.ForeignKey(Alumno, on_delete=models.CASCADE, related_name="consentimientos")
     tipo = models.CharField(max_length=25, choices=TIPO_CHOICES)
