@@ -20,6 +20,7 @@ class AlumnoSerializer(TenantScopedFKMixin, serializers.ModelSerializer):
     # accidentally wipe out other memberships.
     grupos_detalle = serializers.SerializerMethodField()
     marca_display = serializers.CharField(source="get_marca_display", read_only=True)
+    curso_display = serializers.CharField(source="get_curso_display", read_only=True, default="")
 
     def get_grupos_detalle(self, obj):
         # hora_inicio/hora_fin are this student's PERSONAL window within the
@@ -40,7 +41,7 @@ class AlumnoSerializer(TenantScopedFKMixin, serializers.ModelSerializer):
             "id", "nombre", "marca", "marca_display", "fecha_nacimiento", "fnac", "telefono", "email", "dni",
             "aviso_cumple_dias",
             "grupos_detalle", "pagador", "pagador_nombre", "empresa", "empresa_nombre",
-            "es_fundae", "es_adulto", "nivel", "notas", "activo", "motivo_baja", "fecha_baja", "created_at",
+            "es_fundae", "es_adulto", "nivel", "curso", "curso_display", "notas", "activo", "motivo_baja", "fecha_baja", "created_at",
             "foto_url", "nivel_objetivo", "examen_objetivo", "colegio_origen", "idioma_nativo",
             "contacto_emergencia_nombre", "contacto_emergencia_telefono",
         ]
