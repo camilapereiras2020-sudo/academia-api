@@ -1,1 +1,2 @@
 web: python manage.py migrate --noinput && python manage.py ensure_superuser && python manage.py seed_emisores && python manage.py fix_legacy_docs && gunicorn config.wsgi:application --bind 0.0.0.0:$PORT
+cron_birthday_emails: python manage.py send_birthday_emails

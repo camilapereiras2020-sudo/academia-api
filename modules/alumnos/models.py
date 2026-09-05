@@ -11,6 +11,16 @@ EXAMEN_OBJETIVO_CHOICES = [
     ("KET", "KET"), ("PET", "PET"), ("FCE", "FCE"),
     ("CAE", "CAE"), ("CPE", "CPE"), ("ninguno", "Ninguno"),
 ]
+# School year, Spanish system — separate from nivel/nivel_objetivo (those are
+# CEFR language level, this is the student's actual grade at school).
+CURSO_CHOICES = [
+    ("infantil_3", "Infantil 3 años"), ("infantil_4", "Infantil 4 años"), ("infantil_5", "Infantil 5 años"),
+    ("primaria_1", "1º Primaria"), ("primaria_2", "2º Primaria"), ("primaria_3", "3º Primaria"),
+    ("primaria_4", "4º Primaria"), ("primaria_5", "5º Primaria"), ("primaria_6", "6º Primaria"),
+    ("eso_1", "1º ESO"), ("eso_2", "2º ESO"), ("eso_3", "3º ESO"), ("eso_4", "4º ESO"),
+    ("bach_1", "1º Bachillerato"), ("bach_2", "2º Bachillerato"),
+    ("fp", "Formación Profesional"), ("adulto", "Adulto"), ("otro", "Otro"),
+]
 
 
 class Alumno(models.Model):
@@ -40,6 +50,7 @@ class Alumno(models.Model):
     es_fundae = models.BooleanField(default=False)
     es_adulto = models.BooleanField(default=False)
     nivel = models.CharField(max_length=10, blank=True)
+    curso = models.CharField(max_length=20, choices=CURSO_CHOICES, blank=True)
     notas = models.TextField(blank=True)
     activo = models.BooleanField(default=True)
     # Set together when an alumno is marked as no longer enrolled (see
@@ -56,6 +67,11 @@ class Alumno(models.Model):
     idioma_nativo = models.CharField(max_length=100, blank=True)
     contacto_emergencia_nombre = models.CharField(max_length=200, blank=True)
     contacto_emergencia_telefono = models.CharField(max_length=20, blank=True)
+
+    # Set by send_birthday_emails whenever a birthday email actually goes
+    # out — prevents a duplicate send if the command runs more than once on
+    # the same day (manual rerun, deploy retry, etc.). Compared by year only.
+    ultimo_email_cumple_enviado = models.DateField(null=True, blank=True)
 
     class Meta:
         ordering = ["nombre"]
