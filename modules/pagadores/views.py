@@ -68,28 +68,32 @@ class PagadorCalculadoraView(APIView):
             items = []
             total = Decimal("0")
 
+            n_hermanos = len(perfiles)
             es_bono_familia = (
-                len(perfiles) == 2
+                n_hermanos in (2, 3, 4)
                 and perfiles[0]["duracion"] is not None
-                and perfiles[0]["dias"] == perfiles[1]["dias"]
-                and perfiles[0]["duracion"] == perfiles[1]["duracion"]
+                and all(
+                    p["dias"] == perfiles[0]["dias"] and p["duracion"] == perfiles[0]["duracion"]
+                    for p in perfiles
+                )
             )
 
             if es_bono_familia:
                 dias, duracion = perfiles[0]["dias"], perfiles[0]["duracion"]
-                encontrado = precio_bono_familia(dias, duracion)
+                encontrado = precio_bono_familia(dias, duracion, n_hermanos)
                 if encontrado:
                     precio, descuento = encontrado
                     total += Decimal(str(precio))
                     items.append({
                         "tipo": "bono_familia",
                         "alumnos": [p["alumno"].nombre for p in perfiles],
+                        "n_hermanos": n_hermanos,
                         "dias_semana": dias, "duracion_min": duracion,
                         "precio": precio, "descuento_pct": descuento,
                     })
                 else:
                     avisos.append(
-                        f"Bono Familia fuera de tabla ({dias} días/sem, {duracion} min) — calcular a mano."
+                        f"Bono Familia ({n_hermanos} hermanos) fuera de tabla ({dias} días/sem, {duracion} min) — calcular a mano."
                     )
             else:
                 for p in perfiles:

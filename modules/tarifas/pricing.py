@@ -26,11 +26,21 @@ CLASES_GRUPO = {
     90: {1: (72, 0), 2: (140, 3), 3: (205, 5), 4: (268, 7), 5: (328, 9)},
 }
 
-# Bono Familia = Clases Grupo x2 con un 5% de descuento fijo de familia,
-# igual en todos los tramos.
+# Bono Familia = Clases Grupo x n_hermanos con un 5% de descuento fijo de
+# familia, igual en todos los tramos. {n_hermanos: {duracion_min: {dias_semana: (precio_mes, descuento_pct)}}}
 BONO_FAMILIA = {
-    60: {1: (95, 5), 2: (180, 5), 3: (275, 5), 4: (350, 5), 5: (435, 5)},
-    90: {1: (137, 5), 2: (266, 5), 3: (390, 5), 4: (509, 5), 5: (623, 5)},
+    2: {
+        60: {1: (95, 5), 2: (180, 5), 3: (275, 5), 4: (350, 5), 5: (435, 5)},
+        90: {1: (137, 5), 2: (266, 5), 3: (390, 5), 4: (509, 5), 5: (623, 5)},
+    },
+    3: {
+        60: {1: (145, 5), 2: (270, 5), 3: (415, 5), 4: (525, 5), 5: (655, 5)},
+        90: {1: (205, 5), 2: (399, 5), 3: (584, 5), 4: (764, 5), 5: (935, 5)},
+    },
+    4: {
+        60: {1: (190, 5), 2: (360, 5), 3: (550, 5), 4: (705, 5), 5: (875, 5)},
+        90: {1: (274, 5), 2: (532, 5), 3: (779, 5), 4: (1018, 5), 5: (1246, 5)},
+    },
 }
 
 
@@ -42,8 +52,8 @@ def precio_clase_grupo(dias_semana, duracion_min):
     return tabla.get(dias_semana) if tabla else None
 
 
-def precio_bono_familia(dias_semana, duracion_min):
-    tabla = BONO_FAMILIA.get(duracion_min)
+def precio_bono_familia(dias_semana, duracion_min, n_hermanos=2):
+    tabla = BONO_FAMILIA.get(n_hermanos, {}).get(duracion_min)
     return tabla.get(dias_semana) if tabla else None
 
 
