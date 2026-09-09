@@ -198,11 +198,11 @@ class AlumnoViewSet(ContactableViaPagadorMixin, ModelViewSet):
             grupo = Grupo.objects.get(id=grupo_id, academia=request.user.tenant)
         except Grupo.DoesNotExist:
             return Response({"error": "Grupo no encontrado"}, status=status.HTTP_404_NOT_FOUND)
-        if grupo.marca != alumno.marca:
-            return Response(
-                {"error": f"{alumno.nombre} es de {alumno.get_marca_display()} — '{grupo.nombre}' es de {grupo.get_marca_display()}."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        # No marca-match check here (2026-09-09, on purpose — mirrors the
+        # frontend's assignAlumnoToGrupo in HorarioBuilderPage.tsx): while
+        # groups are still being formed, mixing Cami&Co/Rangers Academy
+        # students in one class is fine for Horario. Marca still matters for
+        # facturación — this endpoint doesn't touch billing, just enrollment.
         hora_inicio = _parse_hora(request.data.get("hora_inicio"))
         hora_fin = _parse_hora(request.data.get("hora_fin"))
         error = _validar_horario_personal(grupo, hora_inicio, hora_fin)
