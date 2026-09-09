@@ -98,12 +98,19 @@ class AlumnoViewSet(ContactableViaPagadorMixin, ModelViewSet):
         return response
 
     def get_queryset(self):
+        # No marca_scope_for() here (2026-09-09, on purpose, same decision as
+        # modules.grupos.views.GrupoViewSet — see the comment there): Cami
+        # confirmed Candela/Sofía should see and manage her Cami&Co alumnos
+        # too from Horario, not just Rangers Academy's. Alumno is the other
+        # model Horario depends on, so it dropped scoping alongside Grupo.
+        # This also means the plain Alumnos list page now shows both marcas
+        # to co_manager/reception, not just Horario — same underlying
+        # queryset, couldn't be split without giving Horario its own
+        # separate endpoint. Deliberately NOT touched: everything scoped in
+        # pagos/documentos/pagadores/crm/tarifas.
         qs = Alumno.objects.filter(academia=self.request.user.tenant).select_related(
             "pagador", "empresa"
         ).prefetch_related("grupos")
-        scope = marca_scope_for(self.request.user)
-        if scope:
-            qs = qs.filter(marca=scope)
         search    = self.request.query_params.get("search")
         grupo     = self.request.query_params.get("grupo")
         empresa   = self.request.query_params.get("empresa")
@@ -164,25 +171,11 @@ class AlumnoViewSet(ContactableViaPagadorMixin, ModelViewSet):
         # out of her "contacto básico" scope.
         if self.request.user.role == "reception":
             raise PermissionDenied("No tenés permiso para crear alumnos nuevos.")
-        scope = marca_scope_for(self.request.user)
-        if scope:
-            provided = serializer.validated_data.get("marca")
-            if provided and provided != scope:
-                raise PermissionDenied(f"Solo podés crear alumnos de la marca {scope}.")
-            alumno = serializer.save(academia=self.request.user.tenant, marca=scope)
-        else:
-            alumno = serializer.save(academia=self.request.user.tenant)
+        alumno = serializer.save(academia=self.request.user.tenant)
         self._auto_link_self_pay_pagador(alumno, serializer)
 
     def perform_update(self, serializer):
-        scope = marca_scope_for(self.request.user)
-        if scope:
-            provided = serializer.validated_data.get("marca")
-            if provided and provided != scope:
-                raise PermissionDenied(f"Solo podés editar alumnos de la marca {scope}.")
-            alumno = serializer.save(marca=scope)
-        else:
-            alumno = serializer.save()
+        alumno = serializer.save()
         self._auto_link_self_pay_pagador(alumno, serializer)
 
     def perform_destroy(self, instance):
