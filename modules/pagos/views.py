@@ -316,6 +316,16 @@ class PagoViewSet(ModelViewSet):
                 {"error": "Este pago tiene documentos emitidos: anúlalos en vez de eliminar el pago."},
                 status=status.HTTP_409_CONFLICT,
             )
+        # Unlike the primary side (Documento.pago, on_delete=PROTECT), a
+        # ManyToManyField gives no DB-level protection for the "additional"
+        # side — deleting a Pago that's only bundled into someone else's
+        # combined invoice would silently detach it from that invoice with
+        # no error. Same guard as above, just covering the other side.
+        if any(doc.is_issued for doc in pago.documentos_combinados.all()):
+            return Response(
+                {"error": "Este pago forma parte de una factura combinada emitida: anúlala en vez de eliminar el pago."},
+                status=status.HTTP_409_CONFLICT,
+            )
         # Documento.pago is on_delete=PROTECT now (an issued Documento must
         # never cascade-delete) — but a lingering borrador Documento (never
         # actually issued, no Drive/local file) is meant to be freely

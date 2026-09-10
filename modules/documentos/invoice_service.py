@@ -520,6 +520,217 @@ def generate_pdf_bytes(
     return buf.getvalue()
 
 
+def generate_pdf_bytes_multi(
+    academia_nombre, academia_autonoma, academia_dir, academia_ciudad,
+    academia_tel, academia_email, academia_cif, iban,
+    pagador_nombre, pagador_nif, pagador_tel, pagador_email,
+    items_alumnos,  # [(alumno_nombre, grupo_nombre, importe), ...]
+    periodo, num_doc, fecha, tipo,
+    theme: dict = None,
+    watermark: str = None,
+) -> bytes:
+    """Same document as generate_pdf_bytes, but for a "family" invoice
+    covering several students' payments on one PDF — one line per student
+    instead of one line per mensualidad/descuento/extra. Each student's
+    `importe` is already their own net total (mensualidad - descuento +
+    extras all rolled in), so this doesn't re-itemize a given student's
+    breakdown, just lists what each of them owes and sums it.
+    """
+    t          = theme or THEME_CAMIANDCO
+    accent     = t["accent"]
+    accent_hex = t["accent_hex"]
+    bg         = t["bg"]
+    logo_fn    = t["logo_fn"]
+    logo_w     = t["logo_w"]
+    logo_h     = t["logo_h"]
+    quote      = t["quote"]
+
+    if isinstance(fecha, str):
+        fecha = date.fromisoformat(fecha)
+
+    year_str, month_str = periodo.split("-")
+    year, month  = int(year_str), int(month_str)
+    mes_nombre   = MESES_ES[month].capitalize()
+    title_label  = "FACTURA" if tipo == "factura" else "RECIBO"
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        leftMargin=2.2*cm, rightMargin=2.2*cm,
+        topMargin=2.5*cm, bottomMargin=2.5*cm,
+    )
+    W     = A4[0] - 4.4*cm
+    story = []
+
+    # ── Header ───────────────────────────────────────────────────────────────
+    logo_path = os.path.join(os.path.dirname(__file__), logo_fn)
+    if not os.path.exists(logo_path):
+        logo_path = os.path.join(os.path.dirname(__file__), logo_fn.lower())
+    if os.path.exists(logo_path):
+        left_cell = Image(logo_path, width=logo_w, height=logo_h, kind="proportional")
+    else:
+        left_cell = Paragraph(
+            f"<font color='{accent_hex}' size=22><b>{academia_nombre}</b></font>",
+            _ps("logo", leading=26),
+        )
+
+    right_cell = Paragraph(
+        f"<font color='{accent_hex}' size=28><b>{title_label}</b></font><br/>"
+        f"<font color='#2D2D2D' size=12><b>N.º {num_doc}</b></font><br/>"
+        f"<font color='#2D2D2D' size=11>Fecha: {_date_es(fecha)}</font>",
+        _ps("rh", alignment=TA_RIGHT, leading=22),
+    )
+
+    hdr = Table([[left_cell, right_cell]], colWidths=[logo_w, W - logo_w])
+    hdr.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("ALIGN",  (1, 0), (1,  0),  "RIGHT"),
+        ("LINEBELOW", (0, 0), (-1, -1), 0, WHITE),
+    ]))
+    story.append(hdr)
+    story.append(Spacer(1, 0.4*cm))
+    story.append(HRFlowable(width="100%", thickness=2, color=accent, spaceAfter=10))
+
+    # ── Quote ─────────────────────────────────────────────────────────────────
+    story.append(Paragraph(
+        f"<i>{quote}</i>",
+        _ps("q", fontSize=8.5, textColor=LGRAY, alignment=TA_CENTER, spaceAfter=14, leading=13),
+    ))
+
+    # ── DE / PARA ─────────────────────────────────────────────────────────────
+    st_lbl = _ps("lbl", fontSize=8,   textColor=accent, fontName="Helvetica-Bold", leading=12)
+    st_val = _ps("val", fontSize=9.5, textColor=DARK,   leading=14)
+
+    def info_block(title_txt, lines):
+        parts = [Paragraph(title_txt, st_lbl)]
+        for line in lines:
+            if line:
+                parts.append(Paragraph(line, st_val))
+        return parts
+
+    emisor_lines = [
+        f"<b>{academia_nombre}</b>",
+        academia_autonoma,
+        f"NIF: {academia_cif}",
+        f"{academia_dir}, {academia_ciudad}",
+        f"Tel: {academia_tel}",
+        academia_email,
+    ]
+    if iban:
+        emisor_lines.append(f"IBAN: {iban}")
+    emisor_block = info_block("DE:", emisor_lines)
+
+    pagador_lines = [f"<b>{pagador_nombre}</b>"]
+    if pagador_nif:   pagador_lines.append(f"DNI/NIF: {pagador_nif}")
+    if pagador_tel:   pagador_lines.append(f"Tel: {pagador_tel}")
+    if pagador_email: pagador_lines.append(f"Email: {pagador_email}")
+    para_block = info_block("PARA:", pagador_lines)
+
+    info_tbl = Table([[emisor_block, para_block]], colWidths=[W / 2, W / 2])
+    info_tbl.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LINEBELOW", (0, 0), (-1, -1), 0, WHITE),
+    ]))
+    story.append(info_tbl)
+    story.append(Spacer(1, 0.6*cm))
+
+    # ── Alumnos ──────────────────────────────────────────────────────────────
+    story.append(Paragraph(
+        "ALUMNO/S",
+        _ps("al", fontSize=8, textColor=accent, fontName="Helvetica-Bold", spaceAfter=4),
+    ))
+    nombres = " · ".join(f"<b>{nombre}</b>" for nombre, _, _ in items_alumnos)
+    alumno_tbl = Table(
+        [[Paragraph(nombres, _ps("an", fontSize=11, textColor=DARK, alignment=TA_CENTER))]],
+        colWidths=[W],
+    )
+    alumno_tbl.setStyle(TableStyle([
+        ("BACKGROUND",    (0, 0), (-1, -1), bg),
+        ("BOX",           (0, 0), (-1, -1), 1.5, accent),
+        ("TOPPADDING",    (0, 0), (-1, -1), 10),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+    ]))
+    story.append(alumno_tbl)
+    story.append(Spacer(1, 0.6*cm))
+
+    # ── Items table: one row per student ────────────────────────────────────
+    total = sum(float(importe) for _, _, importe in items_alumnos)
+    col_w = [W * 0.52, W * 0.12, W * 0.18, W * 0.18]
+
+    st_hdr = _ps("h",  fontSize=9,  textColor=WHITE, fontName="Helvetica-Bold")
+    st_hc  = _ps("hc", fontSize=9,  textColor=WHITE, fontName="Helvetica-Bold", alignment=TA_CENTER)
+    st_hr  = _ps("hr", fontSize=9,  textColor=WHITE, fontName="Helvetica-Bold", alignment=TA_RIGHT)
+    st_cel = _ps("ce", fontSize=10, textColor=DARK)
+    st_cc  = _ps("cc", fontSize=10, textColor=DARK, alignment=TA_CENTER)
+    st_cr  = _ps("cr", fontSize=10, textColor=DARK, alignment=TA_RIGHT)
+
+    table_data = [[
+        Paragraph("Alumno/a — Clase", st_hdr),
+        Paragraph("Cant.", st_hc),
+        Paragraph("Precio", st_hr),
+        Paragraph("Importe", st_hr),
+    ]]
+    for alumno_nombre, grupo_nombre, importe in items_alumnos:
+        desc = f"Clases de inglés — {mes_nombre} {year} — {alumno_nombre}"
+        if grupo_nombre:
+            desc += f" ({grupo_nombre})"
+        table_data.append([
+            Paragraph(desc, st_cel),
+            Paragraph("1", st_cc),
+            Paragraph(_eur(importe), st_cr),
+            Paragraph(_eur(importe), st_cr),
+        ])
+
+    n_items = len(items_alumnos)
+    st_tot  = _ps("stot", fontSize=11, textColor=WHITE, fontName="Helvetica-Bold", alignment=TA_RIGHT)
+    table_data.append(["", "", Paragraph("TOTAL", st_tot), Paragraph(_eur(total), st_tot)])
+    total_row = 1 + n_items
+
+    style_cmds = [
+        ("BACKGROUND",    (0, 0),          (-1, 0),          DARK),
+        ("TOPPADDING",    (0, 0),          (-1, -1),         5),
+        ("BOTTOMPADDING", (0, 0),          (-1, -1),         5),
+        ("LEFTPADDING",   (0, 0),          (-1, -1),         4),
+        ("RIGHTPADDING",  (0, 0),          (-1, -1),         4),
+        ("GRID",          (0, 0),          (-1, -1),         0.5, colors.HexColor("#DDDDDD")),
+        ("BACKGROUND",    (2, total_row),  (3, total_row),   accent),
+        ("SPAN",          (0, total_row),  (1, total_row)),
+    ]
+    for i in range(n_items):
+        if i % 2 == 0:
+            style_cmds.append(("BACKGROUND", (0, i + 1), (-1, i + 1), bg))
+
+    items_tbl = Table(table_data, colWidths=col_w)
+    items_tbl.setStyle(TableStyle(style_cmds))
+    story.append(items_tbl)
+
+    # ── Footer ────────────────────────────────────────────────────────────────
+    story.append(Spacer(1, 0.8*cm))
+    story.append(HRFlowable(width="100%", thickness=1.5, color=accent, spaceAfter=6))
+    story.append(Paragraph(
+        "TÉRMINOS DE PAGO",
+        _ps("fp", fontSize=8, fontName="Helvetica-Bold", textColor=DARK,
+            alignment=TA_CENTER, spaceAfter=4),
+    ))
+    story.append(Paragraph(
+        "Los honorarios se gestionarán dentro de los <b>primeros 5 días naturales del mes</b>.",
+        _ps("ft", fontSize=8, textColor=GRAY, alignment=TA_CENTER, spaceAfter=4, leading=12),
+    ))
+    if iban:
+        story.append(Paragraph(iban, _ps("ib", fontSize=8, textColor=GRAY, alignment=TA_CENTER, spaceAfter=4)))
+    story.append(Paragraph(
+        "Operación exenta de IVA según el art. 20.Uno de la Ley 37/1992",
+        _ps("ex", fontSize=8, textColor=LGRAY, alignment=TA_CENTER, fontName="Helvetica-Oblique"),
+    ))
+
+    if watermark:
+        stamp = lambda c, d: _draw_watermark(c, d, watermark)
+        doc.build(story, onFirstPage=stamp, onLaterPages=stamp)
+    else:
+        doc.build(story)
+    return buf.getvalue()
+
+
 # ── Main entry point ──────────────────────────────────────────────────────────
 
 def _pagador_display_fields(pagador, alumno):
@@ -691,29 +902,77 @@ def generate_invoice_pdf_async(pago, tipo="factura"):
     return num_doc, tipo_doc, pdf_bytes, schedule_drive_upload
 
 
-def _rerender_documento_pdf(documento, watermark: str = None, subfolder: str = None) -> str:
-    """Shared by regenerate_anulada_pdf/reactivar_documento: re-render a
-    Documento's PDF (reusing its existing num_doc — never consumes a new
-    invoice number) and move it in Drive, deleting the old file. Returns the
-    new Drive file id.
-    """
-    pago = documento.pago
-    if pago is None:
-        raise ValueError(f"Documento {documento.id} has no linked Pago; cannot regenerate.")
-    emisor = pago.emisor
-    if emisor is None:
-        raise ValueError(f"Pago {pago.id} has no emisor assigned.")
+def _prepare_combined_invoice_pdf(pagos, emisor_id=None, tipo="factura"):
+    """Like _prepare_invoice_pdf, but for a "family" invoice bundling several
+    Pagos (siblings) onto one document. All pagos must share the same
+    pagador — that's the whole point, one payer's combined bill — and none
+    may already have an issued document (as a primary pago or as someone
+    else's pagos_adicionales). The single-pago path (_prepare_invoice_pdf)
+    is untouched; this is a separate, additive function.
 
-    pagador, alumno, grupo = pago.pagador, pago.alumno, pago.grupo
-    extras = pago.extras or []
-    metodo = pago.metodo or ""
-    fecha  = pago.fecha or date.today()
+    emisor_id: which of the two Emisor rows issues this invoice. Required
+    when the pagos span more than one brand's default emisor (there's no
+    way to guess which sister invoices a mixed-brand family) — optional and
+    defaults to the primary pago's own emisor when all pagos already agree
+    on one.
+    """
+    if not pagos:
+        raise ValueError("No hay pagos para combinar.")
+
+    pagador_ids = {p.pagador_id for p in pagos}
+    if len(pagador_ids) != 1 or None in pagador_ids:
+        raise ValueError("Todos los pagos deben tener el mismo pagador para combinarlos en una factura.")
+
+    for p in pagos:
+        if p.estado_carga == "pendiente_completar" or not p.alumno_id:
+            raise ValueError(f"Pago {p.id} está incompleto — complétalo antes de combinar.")
+        if p.documentos.exclude(estado="borrador").exists() or p.documentos_combinados.exclude(estado="borrador").exists():
+            raise ValueError(f"Pago {p.id} ya tiene un documento emitido — no se puede combinar de nuevo.")
+
+    from modules.documentos.models import Emisor as EmisorModel
+    if emisor_id:
+        try:
+            emisor = EmisorModel.objects.get(id=emisor_id, academia=pagos[0].academia)
+        except EmisorModel.DoesNotExist:
+            raise ValueError(f"Emisor {emisor_id} no encontrado.")
+    else:
+        emisor_ids = {p.emisor_id for p in pagos}
+        if len(emisor_ids) != 1 or None in emisor_ids:
+            raise ValueError(
+                "Estos pagos tienen emisores distintos (marcas distintas) — "
+                "indica explícitamente qué emisora factura a esta familia."
+            )
+        emisor = pagos[0].emisor
+
+    primary = pagos[0]
+    pagador = primary.pagador
+    pagador_nombre, pagador_nif, pagador_tel, pagador_email = _pagador_display_fields(pagador, None)
+
+    metodo   = primary.metodo or ""
+    tipo_doc = tipo_doc_for_metodo(metodo)
+
+    num_doc = primary.numero_factura_reservado
+    if not num_doc:
+        from django.db import transaction
+        with transaction.atomic():
+            locked_emisor = EmisorModel.objects.select_for_update().get(pk=emisor.pk)
+            num_doc = _next_invoice_number(locked_emisor, tipo_doc)
+            for p in pagos:
+                p.numero_factura_reservado = num_doc
+            type(primary).objects.bulk_update(pagos, ["numero_factura_reservado"])
+
+    fecha = primary.fecha or date.today()
     if isinstance(fecha, str):
         fecha = date.fromisoformat(fecha)
-    theme = THEME_RANGERS if getattr(emisor, "slug", "") == "rangers" else THEME_CAMIANDCO
-    pagador_nombre, pagador_nif, pagador_tel, pagador_email = _pagador_display_fields(pagador, alumno)
 
-    pdf_bytes = generate_pdf_bytes(
+    theme = THEME_RANGERS if getattr(emisor, "slug", "") == "rangers" else THEME_CAMIANDCO
+
+    items_alumnos = [
+        (p.alumno.nombre, p.grupo.nombre if p.grupo else "", p.total)
+        for p in pagos
+    ]
+
+    pdf_bytes = generate_pdf_bytes_multi(
         academia_nombre   = emisor.nombre,
         academia_autonoma = emisor.autonoma,
         academia_dir      = emisor.direccion,
@@ -726,21 +985,120 @@ def _rerender_documento_pdf(documento, watermark: str = None, subfolder: str = N
         pagador_nif     = pagador_nif,
         pagador_tel     = pagador_tel,
         pagador_email   = pagador_email,
-        alumno_nombre   = alumno.nombre if alumno else "",
-        grupo_nombre    = grupo.nombre if grupo else "",
-        periodo         = pago.periodo,
-        mensualidad     = pago.mensualidad,
-        descuento       = pago.descuento,
-        extras          = extras,
-        total           = pago.total,
-        metodo          = metodo,
-        concepto_libre  = getattr(pago, "concepto_libre", "") or "",
-        num_doc         = documento.num_doc,
+        items_alumnos   = items_alumnos,
+        periodo         = primary.periodo,
+        num_doc         = num_doc,
         fecha           = fecha,
-        tipo            = documento.tipo,
+        tipo            = tipo_doc,
         theme           = theme,
-        watermark       = watermark,
     )
+
+    return num_doc, tipo_doc, pdf_bytes, fecha, emisor
+
+
+def generate_combined_invoice_pdf_async(pagos, emisor_id=None, tipo="factura"):
+    """Combined-invoice counterpart to generate_invoice_pdf_async — same
+    never-blocks-on-Drive contract, same schedule_drive_upload(documento_id)
+    callback shape.
+    """
+    num_doc, tipo_doc, pdf_bytes, fecha, emisor = _prepare_combined_invoice_pdf(pagos, emisor_id, tipo)
+    folder_id = emisor.drive_folder_id or os.environ.get("GOOGLE_DRIVE_FOLDER_ID") or ""
+    filename  = f"{num_doc}.pdf"
+
+    def schedule_drive_upload(documento_id):
+        def _worker():
+            try:
+                drive_id = upload_to_drive(pdf_bytes, filename, fecha.year, fecha.month, folder_id)
+                from modules.documentos.models import Documento
+                Documento.objects.filter(pk=documento_id).update(s3_key=drive_id)
+            except Exception as e:
+                print(f"[invoice] background Drive upload failed for documento {documento_id}: {e}")
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    return num_doc, tipo_doc, pdf_bytes, schedule_drive_upload
+
+
+def _rerender_documento_pdf(documento, watermark: str = None, subfolder: str = None) -> str:
+    """Shared by regenerate_anulada_pdf/reactivar_documento: re-render a
+    Documento's PDF (reusing its existing num_doc — never consumes a new
+    invoice number) and move it in Drive, deleting the old file. Returns the
+    new Drive file id. Branches on whether this is a combined (family)
+    document or an ordinary single-pago one — same num_doc/emisor/fecha
+    either way, just a different renderer and item list.
+    """
+    pago = documento.pago
+    if pago is None:
+        raise ValueError(f"Documento {documento.id} has no linked Pago; cannot regenerate.")
+    emisor = pago.emisor
+    if emisor is None:
+        raise ValueError(f"Pago {pago.id} has no emisor assigned.")
+
+    fecha  = pago.fecha or date.today()
+    if isinstance(fecha, str):
+        fecha = date.fromisoformat(fecha)
+    theme = THEME_RANGERS if getattr(emisor, "slug", "") == "rangers" else THEME_CAMIANDCO
+
+    adicionales = list(documento.pagos_adicionales.all())
+    if adicionales:
+        pagos = [pago] + adicionales
+        pagador_nombre, pagador_nif, pagador_tel, pagador_email = _pagador_display_fields(pago.pagador, None)
+        items_alumnos = [(p.alumno.nombre, p.grupo.nombre if p.grupo else "", p.total) for p in pagos]
+        pdf_bytes = generate_pdf_bytes_multi(
+            academia_nombre   = emisor.nombre,
+            academia_autonoma = emisor.autonoma,
+            academia_dir      = emisor.direccion,
+            academia_ciudad   = emisor.ciudad,
+            academia_tel      = emisor.telefono,
+            academia_email    = getattr(emisor, "email", "") or "",
+            academia_cif      = emisor.nif,
+            iban              = emisor.iban,
+            pagador_nombre  = pagador_nombre,
+            pagador_nif     = pagador_nif,
+            pagador_tel     = pagador_tel,
+            pagador_email   = pagador_email,
+            items_alumnos   = items_alumnos,
+            periodo         = pago.periodo,
+            num_doc         = documento.num_doc,
+            fecha           = fecha,
+            tipo            = documento.tipo,
+            theme           = theme,
+            watermark       = watermark,
+        )
+    else:
+        pagador, alumno, grupo = pago.pagador, pago.alumno, pago.grupo
+        extras = pago.extras or []
+        metodo = pago.metodo or ""
+        pagador_nombre, pagador_nif, pagador_tel, pagador_email = _pagador_display_fields(pagador, alumno)
+
+        pdf_bytes = generate_pdf_bytes(
+            academia_nombre   = emisor.nombre,
+            academia_autonoma = emisor.autonoma,
+            academia_dir      = emisor.direccion,
+            academia_ciudad   = emisor.ciudad,
+            academia_tel      = emisor.telefono,
+            academia_email    = getattr(emisor, "email", "") or "",
+            academia_cif      = emisor.nif,
+            iban              = emisor.iban,
+            pagador_nombre  = pagador_nombre,
+            pagador_nif     = pagador_nif,
+            pagador_tel     = pagador_tel,
+            pagador_email   = pagador_email,
+            alumno_nombre   = alumno.nombre if alumno else "",
+            grupo_nombre    = grupo.nombre if grupo else "",
+            periodo         = pago.periodo,
+            mensualidad     = pago.mensualidad,
+            descuento       = pago.descuento,
+            extras          = extras,
+            total           = pago.total,
+            metodo          = metodo,
+            concepto_libre  = getattr(pago, "concepto_libre", "") or "",
+            num_doc         = documento.num_doc,
+            fecha           = fecha,
+            tipo            = documento.tipo,
+            theme           = theme,
+            watermark       = watermark,
+        )
 
     folder_id = emisor.drive_folder_id or os.environ.get("GOOGLE_DRIVE_FOLDER_ID") or ""
     new_id = upload_to_drive(
