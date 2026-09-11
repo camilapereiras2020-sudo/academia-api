@@ -37,8 +37,13 @@ THEME_CAMIANDCO = {
     "accent_hex": "#B08D57",
     "bg":         LGBG,
     "logo_fn":    "Logo.png",
-    "logo_w":     9 * cm,
-    "logo_h":     5 * cm,
+    # Logo.png is near-square (537×524px) and rendered with kind="proportional",
+    # so the box's *smaller* dimension sets the actual size regardless of the
+    # other — this used to be 9×5cm, which rendered at ~5cm tall (vs. Rangers'
+    # 3.5cm) and pushed the footer's last two lines onto an orphaned second
+    # page on some invoices. Kept comfortably smaller than that threshold.
+    "logo_w":     4 * cm,
+    "logo_h":     4 * cm,
     "quote":      '"It always seems impossible until it\'s done." — Nelson Mandela',
 }
 THEME_RANGERS = {
