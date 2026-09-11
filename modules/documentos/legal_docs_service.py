@@ -268,7 +268,162 @@ def render_politica_cancelacion_pdf(alumno) -> bytes:
     return buf.getvalue()
 
 
+# ── Documento 3: Aviso de protección de datos ───────────────────────────────
+#
+# NOTE: unlike the two documents above (whose wording came from the
+# 2026-08-30 legal package), this is standard RGPD Art. 13 informative-notice
+# boilerplate — the structure every Spanish academy's privacy notice follows
+# (responsable / finalidad / legitimación / destinatarios / derechos /
+# procedencia) — written here so the "Documentos y consentimientos" checklist
+# has an actual printable PDF instead of a bare checkbox. It is NOT
+# reviewed by a lawyer. Treat it as a first draft: check it (or have it
+# checked) before handing it to real families, same as any new legal text.
+
+def render_proteccion_datos_pdf(alumno) -> bytes:
+    theme = MARCA_TO_THEME.get(alumno.marca, THEME_CAMIANDCO)
+    emisor = _emisor_for_alumno(alumno)
+    buf = io.BytesIO()
+    doc = _base_doc(buf)
+    W = A4[0] - 4.4 * cm
+    story = []
+    _header(story, emisor, theme, "PROTECCIÓN DE DATOS — INFORMACIÓN")
+
+    body = _ps("body", fontSize=9.5, textColor=DARK, leading=14, alignment=TA_JUSTIFY, spaceAfter=8)
+    lbl = _ps("lbl", fontSize=9.5, textColor=theme["accent"], fontName="Helvetica-Bold", spaceAfter=4, spaceBefore=10)
+
+    story.append(_datos_alumno_tabla(alumno, W, theme["accent"], theme["bg"]))
+    story.append(Spacer(1, 0.4 * cm))
+    story.append(Paragraph(
+        "En cumplimiento del Reglamento (UE) 2016/679 (RGPD) y la LOPDGDD, se informa de lo siguiente "
+        "en relación con los datos personales del alumno/a y su familia recogidos con motivo de la matrícula:",
+        body,
+    ))
+
+    story.append(Paragraph("Responsable del tratamiento", lbl))
+    story.append(Paragraph(_responsable_block(emisor), body))
+
+    story.append(Paragraph("Finalidad", lbl))
+    story.append(Paragraph(
+        "Gestión académica y administrativa de la matrícula (inscripción, facturación, comunicación con "
+        "la familia, seguimiento pedagógico) y, cuando se haya autorizado expresamente mediante el "
+        "documento de consentimiento de imagen, difusión de fotografías/vídeos en los canales indicados "
+        "en ese documento.",
+        body,
+    ))
+
+    story.append(Paragraph("Legitimación", lbl))
+    story.append(Paragraph(
+        "Ejecución de la relación contractual derivada de la matrícula (art. 6.1.b RGPD) y, para el uso "
+        "de imagen, el consentimiento explícito y revocable prestado por escrito (art. 6.1.a RGPD).",
+        body,
+    ))
+
+    story.append(Paragraph("Destinatarios", lbl))
+    story.append(Paragraph(
+        "No se ceden datos a terceros salvo obligación legal (por ejemplo, Agencia Tributaria) o "
+        "proveedores que prestan servicio a la Academia bajo contrato de encargado de tratamiento "
+        "(gestoría, herramientas de facturación y almacenamiento en la nube).",
+        body,
+    ))
+
+    story.append(Paragraph("Conservación", lbl))
+    story.append(Paragraph(
+        "Mientras el alumno/a esté matriculado/a y, tras la baja, durante los plazos legales de "
+        "prescripción de responsabilidades fiscales y contables.",
+        body,
+    ))
+
+    story.append(Paragraph("Derechos", lbl))
+    story.append(Paragraph(
+        "Acceso, rectificación, supresión, oposición, limitación y portabilidad, dirigiéndose a la "
+        "Academia en los datos de contacto indicados arriba. Reclamación ante la Agencia Española de "
+        "Protección de Datos (www.aepd.es) si se considera que el tratamiento no se ajusta a la normativa.",
+        body,
+    ))
+
+    story.append(Spacer(1, 0.4 * cm))
+    story.append(Paragraph(
+        "Declaro haber recibido y comprendido esta información sobre el tratamiento de los datos "
+        "personales del alumno/a y su familia.",
+        body,
+    ))
+    story.append(Spacer(1, 0.3 * cm))
+    story.append(_firma_tabla(W, _pagador_nombre(alumno)))
+
+    doc.build(story)
+    return buf.getvalue()
+
+
+# ── Documento 4: Matrícula (resumen de inscripción) ─────────────────────────
+#
+# NOTE: same caveat as above — this formalizes facts already on file (group,
+# rate, payer, payment method) into a signable summary rather than inventing
+# new commercial terms; it explicitly incorporates the cancellation policy
+# and privacy notice by reference instead of restating business-specific
+# numbers here. Still a first draft — have it checked before relying on it.
+
+def _datos_economicos_tabla(alumno, W, accent, bg):
+    insc = alumno.inscripciones.select_related("grupo").first()
+    grupo = insc.grupo if insc else None
+    tarifa = f"{grupo.tarifa:.2f} €/mes" if grupo else "____________"
+    pagador = alumno.pagador
+    metodo = pagador.get_metodo_display() if pagador and pagador.metodo else "____________"
+    frecuencia = pagador.get_frecuencia_display() if pagador and pagador.frecuencia else "____________"
+    iban = (pagador.iban if pagador and pagador.iban else "____________")
+    data = [[
+        Paragraph(f"<b>Cuota:</b> {tarifa}", _ps("e1", fontSize=10, textColor=DARK)),
+        Paragraph(f"<b>Frecuencia de pago:</b> {frecuencia}", _ps("e2", fontSize=10, textColor=DARK)),
+    ], [
+        Paragraph(f"<b>Método de pago:</b> {metodo}", _ps("e3", fontSize=10, textColor=DARK)),
+        Paragraph(f"<b>IBAN (si domiciliación):</b> {iban}", _ps("e4", fontSize=10, textColor=DARK)),
+    ]]
+    tbl = Table(data, colWidths=[W / 2, W / 2])
+    tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), bg),
+        ("BOX", (0, 0), (-1, -1), 1, accent),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+    ]))
+    return tbl
+
+
+def render_matricula_pdf(alumno) -> bytes:
+    theme = MARCA_TO_THEME.get(alumno.marca, THEME_CAMIANDCO)
+    emisor = _emisor_for_alumno(alumno)
+    buf = io.BytesIO()
+    doc = _base_doc(buf)
+    W = A4[0] - 4.4 * cm
+    story = []
+    _header(story, emisor, theme, "MATRÍCULA — RESUMEN DE INSCRIPCIÓN")
+
+    body = _ps("body", fontSize=9.5, textColor=DARK, leading=14, alignment=TA_JUSTIFY, spaceAfter=8)
+    lbl = _ps("lbl", fontSize=9.5, textColor=theme["accent"], fontName="Helvetica-Bold", spaceAfter=4, spaceBefore=10)
+
+    story.append(Paragraph(_responsable_block(emisor), body))
+    story.append(Spacer(1, 0.3 * cm))
+    story.append(_datos_alumno_tabla(alumno, W, theme["accent"], theme["bg"]))
+    story.append(Spacer(1, 0.3 * cm))
+    story.append(Paragraph("Condiciones económicas", lbl))
+    story.append(_datos_economicos_tabla(alumno, W, theme["accent"], theme["bg"]))
+    story.append(Spacer(1, 0.4 * cm))
+
+    story.append(Paragraph(
+        "Al firmar, la familia confirma la inscripción del alumno/a en el grupo y con las condiciones "
+        "económicas indicadas arriba, y declara haber recibido y aceptado la política de cancelación y "
+        "el aviso de protección de datos de la Academia, entregados junto con este documento.",
+        body,
+    ))
+    story.append(Spacer(1, 0.3 * cm))
+    story.append(_firma_tabla(W, _pagador_nombre(alumno)))
+
+    doc.build(story)
+    return buf.getvalue()
+
+
 RENDERERS = {
     "autorizacion_imagen": render_consentimiento_imagen_pdf,
     "politica_cancelacion": render_politica_cancelacion_pdf,
+    "proteccion_datos": render_proteccion_datos_pdf,
+    "matricula": render_matricula_pdf,
 }

@@ -16,7 +16,18 @@ logger = logging.getLogger(__name__)
 
 
 class LeadViewSet(ModelViewSet):
-    permission_classes = [permissions.IsAuthenticated, NotReception]
+    # Reception fields the calls these leads come from, so she needs to log
+    # and follow up on them same as owner/co_manager — see rbac.marca_scope_for
+    # (reception isn't marca-scoped either, so she sees leads for both brands,
+    # same as owner). The one action still reserved is convertir_alumno: it
+    # creates a real Alumno + Pago, an enrollment decision, same line drawn
+    # for AlumnoViewSet.perform_create — see get_permissions below.
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_permissions(self):
+        if self.action == "convertir_alumno":
+            return [permissions.IsAuthenticated(), NotReception()]
+        return super().get_permissions()
 
     def get_serializer_class(self):
         if self.action == "list":
@@ -250,7 +261,9 @@ class LeadViewSet(ModelViewSet):
 
 class InteraccionViewSet(ModelViewSet):
     serializer_class = InteraccionSerializer
-    permission_classes = [permissions.IsAuthenticated, NotReception]
+    # Logging a call/WhatsApp/email is front-desk work — same reasoning as
+    # LeadViewSet above.
+    permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
         qs = Interaccion.objects.filter(lead__academia=self.request.user.tenant)
