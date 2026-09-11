@@ -117,9 +117,12 @@ class AlumnoViewSet(ContactableViaPagadorMixin, ModelViewSet):
         es_fundae = self.request.query_params.get("es_fundae")
         tipo      = self.request.query_params.get("tipo")  # "empresa", "particular", "fundae"
         marca     = self.request.query_params.get("marca")
+        pagador   = self.request.query_params.get("pagador")
 
         if marca:
             qs = qs.filter(marca=marca)
+        if pagador:
+            qs = qs.filter(pagador_id=pagador)
         if search:
             from django.db.models import Q
             qs = qs.filter(

@@ -23,17 +23,18 @@ class DocumentoSerializer(serializers.ModelSerializer):
     download_url = serializers.SerializerMethodField()
     drive_url = serializers.SerializerMethodField()
     pago_info = serializers.SerializerMethodField()
+    pagos_adicionales = serializers.PrimaryKeyRelatedField(many=True, read_only=True)
 
     class Meta:
         model = Documento
         fields = [
-            "id", "pago", "tipo", "nombre", "num_doc",
+            "id", "pago", "pagos_adicionales", "tipo", "nombre", "num_doc",
             "mime_type", "download_url", "drive_url", "pago_info", "created_at",
             "estado", "emitida_at", "anulada_at", "motivo_anulacion",
         ]
         read_only_fields = [
             "id", "created_at", "download_url", "drive_url", "pago_info",
-            "estado", "emitida_at", "anulada_at", "motivo_anulacion",
+            "estado", "emitida_at", "anulada_at", "motivo_anulacion", "pagos_adicionales",
         ]
 
     def get_download_url(self, obj):
@@ -48,15 +49,19 @@ class DocumentoSerializer(serializers.ModelSerializer):
         return f"https://drive.google.com/file/d/{obj.s3_key}/view" if obj.s3_key else None
 
     def get_pago_info(self, obj):
-        if obj.pago:
-            return {
-                "alumno": obj.pago.alumno.nombre if obj.pago.alumno else None,
-                "pagador": (
-                    obj.pago.pagador.nombre if obj.pago.pagador
-                    else (obj.pago.alumno.nombre if obj.pago.alumno and getattr(obj.pago.alumno, "es_adulto", False) else None)
-                ),
-                "periodo": obj.pago.periodo,
-                "total": str(obj.pago.total),
-                "fecha": obj.pago.fecha.isoformat() if obj.pago.fecha else None,
-            }
-        return None
+        if not obj.pago:
+            return None
+        pagos = obj.todos_los_pagos()
+        alumnos = [p.alumno.nombre for p in pagos if p.alumno]
+        total = sum((p.total for p in pagos), start=0)
+        return {
+            "alumno": obj.pago.alumno.nombre if obj.pago.alumno else None,
+            "alumnos": alumnos,
+            "pagador": (
+                obj.pago.pagador.nombre if obj.pago.pagador
+                else (obj.pago.alumno.nombre if obj.pago.alumno and getattr(obj.pago.alumno, "es_adulto", False) else None)
+            ),
+            "periodo": obj.pago.periodo,
+            "total": str(total),
+            "fecha": obj.pago.fecha.isoformat() if obj.pago.fecha else None,
+        }

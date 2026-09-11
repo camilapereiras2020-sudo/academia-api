@@ -81,6 +81,13 @@ class Documento(models.Model):
     tipo       = models.CharField(max_length=20, choices=TIPO_CHOICES)
     nombre     = models.CharField(max_length=200)
     num_doc    = models.CharField(max_length=30, blank=True)
+    # A "family" invoice covering more than one student's payment: `pago`
+    # stays the primary/first one (numbering, pagador/emisor of record),
+    # these are the rest. Empty for every ordinary single-student document —
+    # purely additive, nothing about the single-pago path changes.
+    pagos_adicionales = models.ManyToManyField(
+        "pagos.Pago", blank=True, related_name="documentos_combinados"
+    )
     s3_key     = models.CharField(max_length=500, blank=True)
     local_path = models.CharField(max_length=500, blank=True)
     # Authoritative copy of the rendered PDF, stored in the DB at generation
@@ -112,3 +119,9 @@ class Documento(models.Model):
             or bool(self.local_path)
             or bool(self.pdf_data)
         )
+
+    def todos_los_pagos(self):
+        """The primary pago plus any bundled-in siblings, primary first."""
+        pagos = [self.pago] if self.pago else []
+        pagos += list(self.pagos_adicionales.all())
+        return pagos

@@ -138,6 +138,80 @@ class DocumentoViewSet(ModelViewSet):
 
         return Response(DocumentoSerializer(doc).data, status=status.HTTP_201_CREATED)
 
+    @action(detail=False, methods=["post"], url_path="generar-combinado")
+    def generar_combinado(self, request):
+        """One invoice covering several pagos (siblings) that all share the
+        same pagador — additive to `generar`, doesn't touch the single-pago
+        path at all. Body: {pago_ids: [...], emisor_id: <optional>}.
+        emisor_id picks which of the two brands' Emisor issues it; required
+        whenever the pagos don't already all agree on one emisor (i.e. a
+        family split across both marcas)."""
+        from django.db import transaction
+        from modules.pagos.models import Pago
+        from .invoice_service import generate_combined_invoice_pdf_async
+
+        pago_ids = request.data.get("pago_ids") or []
+        emisor_id = request.data.get("emisor_id")
+        if not pago_ids or len(pago_ids) < 2:
+            return Response({"error": "pago_ids debe tener al menos 2 pagos."}, status=status.HTTP_400_BAD_REQUEST)
+
+        pago_qs = Pago.objects.select_related("pagador", "alumno", "grupo", "emisor", "academia").filter(
+            academia=request.user.tenant, id__in=pago_ids
+        )
+        scope = marca_scope_for(request.user)
+        if scope:
+            pago_qs = pago_qs.filter(marca=scope)
+        pagos_by_id = {p.id: p for p in pago_qs}
+        if len(pagos_by_id) != len(set(pago_ids)):
+            return Response({"error": "Alguno de los pagos no existe."}, status=status.HTTP_404_NOT_FOUND)
+        # Preserve the caller's order — pagos[0] becomes the primary (Documento.pago),
+        # e.g. determines num_doc's brand tie-break display and which pago "owns" the doc.
+        pagos = [pagos_by_id[pid] for pid in pago_ids]
+
+        with transaction.atomic():
+            Pago.objects.select_for_update().filter(id__in=[p.id for p in pagos])
+
+            try:
+                num_doc, tipo, pdf_bytes, schedule_drive_upload = generate_combined_invoice_pdf_async(
+                    pagos, emisor_id=emisor_id
+                )
+            except ValueError as e:
+                return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            except Exception as e:
+                return Response(
+                    {"error": f"Error generando documento combinado: {str(e)}"},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+
+            doc = Documento.objects.create(
+                academia   = request.user.tenant,
+                pago       = pagos[0],
+                tipo       = tipo,
+                nombre     = f"{num_doc}.pdf",
+                num_doc    = num_doc,
+                s3_key     = "",
+                local_path = "",
+                pdf_data   = pdf_bytes,
+                mime_type  = "application/pdf",
+                estado     = "emitida",
+                emitida_at = timezone.now(),
+            )
+            doc.pagos_adicionales.set(pagos[1:])
+
+            for p in pagos:
+                p.num_doc = num_doc
+            Pago.objects.bulk_update(pagos, ["num_doc"])
+
+        schedule_drive_upload(doc.id)
+
+        try:
+            from .sheets_log import log_emision
+            log_emision(doc)
+        except Exception as e:
+            print(f"[generar-combinado] sheet log failed (non-critical): {e}")
+
+        return Response(DocumentoSerializer(doc).data, status=status.HTTP_201_CREATED)
+
     @action(detail=True, methods=["get"], url_path="descargar")
     def descargar(self, request, pk=None):
         doc = self.get_object()
