@@ -133,20 +133,36 @@ class Command(BaseCommand):
             return
 
         from googleapiclient.discovery import build
+        from googleapiclient.errors import HttpError
 
         creds = _credentials()
         sheets = build("sheets", "v4", credentials=creds, cache_discovery=False)
 
-        # Clear existing data rows first so a shorter export never leaves
-        # stale trailing rows from a previous (larger) run.
-        sheets.spreadsheets().values().clear(
-            spreadsheetId=sheet_id, range=f"{TAB_TITLE}!A3:W1000",
-        ).execute()
-
-        if rows:
-            sheets.spreadsheets().values().update(
-                spreadsheetId=sheet_id, range=f"{TAB_TITLE}!A3",
-                valueInputOption="RAW", body={"values": rows},
+        try:
+            # Clear existing data rows first so a shorter export never leaves
+            # stale trailing rows from a previous (larger) run.
+            sheets.spreadsheets().values().clear(
+                spreadsheetId=sheet_id, range=f"{TAB_TITLE}!A3:W1000",
             ).execute()
+
+            if rows:
+                sheets.spreadsheets().values().update(
+                    spreadsheetId=sheet_id, range=f"{TAB_TITLE}!A3",
+                    valueInputOption="RAW", body={"values": rows},
+                ).execute()
+        except HttpError as e:
+            # A bad/deleted spreadsheet ID or a credential that's lost access
+            # to it both surface as 404 here (Sheets API doesn't distinguish,
+            # to avoid leaking a file's existence to someone without access).
+            # This is a config/permissions problem, not a code bug -- fail
+            # with a clear one-line message instead of a raw traceback, so
+            # the daily cron run shows up as a readable failure rather than
+            # a crash to dig through.
+            from django.core.management.base import CommandError
+            raise CommandError(
+                f"No se pudo escribir en la Google Sheet {sheet_id}: {e}. "
+                "Revisa que la hoja siga existiendo y que la cuenta de "
+                "GOOGLE_TOKEN_JSON todavía tenga acceso a ella."
+            )
 
         self.stdout.write(self.style.SUCCESS(f"Exportados {len(rows)} alumnos a la Sheet."))
