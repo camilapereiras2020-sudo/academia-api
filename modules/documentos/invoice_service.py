@@ -37,8 +37,13 @@ THEME_CAMIANDCO = {
     "accent_hex": "#B08D57",
     "bg":         LGBG,
     "logo_fn":    "Logo.png",
-    "logo_w":     9 * cm,
-    "logo_h":     5 * cm,
+    # Logo.png is near-square (537×524px) and rendered with kind="proportional",
+    # so the box's *smaller* dimension sets the actual size regardless of the
+    # other — this used to be 9×5cm, which rendered at ~5cm tall (vs. Rangers'
+    # 3.5cm) and pushed the footer's last two lines onto an orphaned second
+    # page on some invoices. Kept comfortably smaller than that threshold.
+    "logo_w":     4 * cm,
+    "logo_h":     4 * cm,
     "quote":      '"It always seems impossible until it\'s done." — Nelson Mandela',
 }
 THEME_RANGERS = {
@@ -639,7 +644,11 @@ def generate_pdf_bytes_multi(
         "ALUMNO/S",
         _ps("al", fontSize=8, textColor=accent, fontName="Helvetica-Bold", spaceAfter=4),
     ))
-    nombres = " · ".join(f"<b>{nombre}</b>" for nombre, _, _ in items_alumnos)
+    # One name per line item, so a student with two payments here (e.g. their
+    # regular class plus an extra private lesson) must be de-duplicated —
+    # otherwise this banner reads "Hijo Uno · Hijo Uno · Hijo Tres".
+    nombres_unicos = list(dict.fromkeys(nombre for nombre, _, _ in items_alumnos))
+    nombres = " · ".join(f"<b>{nombre}</b>" for nombre in nombres_unicos)
     alumno_tbl = Table(
         [[Paragraph(nombres, _ps("an", fontSize=11, textColor=DARK, alignment=TA_CENTER))]],
         colWidths=[W],
