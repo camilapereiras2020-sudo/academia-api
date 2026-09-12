@@ -14,6 +14,94 @@ from .models import Documento, Emisor
 from .serializers import DocumentoSerializer, EmisorSerializer
 
 
+def _send_document_email(documento):
+    """Manually-triggered payer email confirming an issued Documento —
+    single-pago or combined ("family") alike, since it reads
+    todos_los_pagos() rather than assuming exactly one. Never automatic
+    (2026-09 redesign): staff clicks "Enviar" once they've reviewed the
+    confirmed invoice, same spirit as not auto-assigning the número either.
+    """
+    from django.conf import settings
+    import os
+    import resend
+    from modules.documentos.invoice_service import _pagador_display_fields
+
+    if os.environ.get("EMAIL_SENDING_ENABLED", "false").lower() != "true":
+        return False, "El envío de emails está desactivado en este entorno (EMAIL_SENDING_ENABLED)."
+
+    pagos = documento.todos_los_pagos()
+    if not pagos:
+        return False, "Este documento no tiene pagos asociados."
+
+    primary = documento.pago
+    pagador_nombre, _nif, _tel, email = _pagador_display_fields(
+        primary.pagador if primary else None,
+        primary.alumno if primary else None,
+    )
+    api_key = getattr(settings, "RESEND_API_KEY", "") or ""
+    if not email:
+        return False, "El pagador no tiene email registrado."
+    if not api_key or api_key == "re_placeholder":
+        return False, "Falta configurar RESEND_API_KEY."
+
+    resend.api_key = api_key
+    alumnos_nombres = " · ".join(p.alumno.nombre for p in pagos if p.alumno)
+    total           = sum(float(p.total) for p in pagos)
+    total_fmt       = "{:,.2f}".format(total).replace(",", "X").replace(".", ",").replace("X", ".")
+    metodo_display  = (primary.metodo or "").capitalize() if primary else ""
+    emisor_nombre   = primary.emisor.nombre if primary and primary.emisor else "Academia"
+    num_doc         = documento.num_doc
+    tipo_label      = "Factura" if documento.tipo == "factura" else "Recibo"
+
+    html = f"""
+    <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;color:#2D2D2D;">
+      <div style="border-bottom:3px solid #B08D57;padding-bottom:12px;margin-bottom:20px;">
+        <h2 style="color:#B08D57;margin:0;">{emisor_nombre} — {tipo_label}</h2>
+      </div>
+      <p>Estimado/a <strong>{pagador_nombre}</strong>,</p>
+      <p>Adjuntamos el resumen de tu {tipo_label.lower()}:</p>
+      <table style="width:100%;border-collapse:collapse;margin:20px 0;font-size:14px;">
+        <tr style="background:#F7F5F2;">
+          <td style="padding:10px 12px;border-bottom:1px solid #ddd;"><strong>Alumno/s</strong></td>
+          <td style="padding:10px 12px;border-bottom:1px solid #ddd;">{alumnos_nombres}</td>
+        </tr>
+        <tr>
+          <td style="padding:10px 12px;border-bottom:1px solid #ddd;"><strong>Importe</strong></td>
+          <td style="padding:10px 12px;border-bottom:1px solid #ddd;">{total_fmt} €</td>
+        </tr>
+        <tr style="background:#F7F5F2;">
+          <td style="padding:10px 12px;border-bottom:1px solid #ddd;"><strong>Método de pago</strong></td>
+          <td style="padding:10px 12px;border-bottom:1px solid #ddd;">{metodo_display}</td>
+        </tr>
+        <tr>
+          <td style="padding:10px 12px;"><strong>Nº de documento</strong></td>
+          <td style="padding:10px 12px;">{num_doc}</td>
+        </tr>
+      </table>
+      <p style="color:#6B6B6B;font-size:12px;">
+        Si tienes cualquier duda, no dudes en ponerte en contacto con nosotros.
+      </p>
+      <p style="color:#B08D57;margin-top:24px;"><strong>{emisor_nombre}</strong></p>
+    </div>
+    """
+
+    pdf_bytes = bytes(documento.pdf_data) if documento.pdf_data else None
+    payload = {
+        "from": settings.DEFAULT_FROM_EMAIL,
+        "to": [email],
+        "subject": f"{tipo_label} — {num_doc}",
+        "html": html,
+    }
+    if pdf_bytes:
+        import base64
+        payload["attachments"] = [{
+            "filename": documento.nombre or f"{num_doc}.pdf",
+            "content": base64.b64encode(pdf_bytes).decode("ascii"),
+        }]
+    resend.Emails.send(payload)
+    return True, None
+
+
 class EmisorViewSet(ModelViewSet):
     """Settings page's "Datos de facturación" — one row per brand (Cami&Co /
     Rangers Academy), each with its own legal name, NIF, address, and contact
@@ -84,11 +172,10 @@ class DocumentoViewSet(ModelViewSet):
 
         with transaction.atomic():
             # Lock the Pago row so two concurrent "generar" calls (double
-            # click, retry after a slow response, or this racing with the
-            # auto-generation path in pagos.views._issue_invoice) can't both
-            # pass the "already has a documento" check before either one
-            # creates it — same select_for_update pattern already used for
-            # the Emisor row in invoice_service.generate_invoice_for_pago.
+            # click, retry after a slow response, two tabs) can't both pass
+            # the "already has a documento" check before either one creates
+            # it — same select_for_update pattern already used for the
+            # Emisor row in invoice_service.generate_invoice_for_pago.
             Pago.objects.select_for_update().get(pk=pago.pk)
 
             # Idempotent: a non-borrador Documento already means this pago's real
@@ -259,6 +346,18 @@ class DocumentoViewSet(ModelViewSet):
             )
 
         return Response({"error": "Archivo no encontrado"}, status=status.HTTP_404_NOT_FOUND)
+
+    @action(detail=True, methods=["post"], url_path="enviar")
+    def enviar(self, request, pk=None):
+        """Manual send — email confirmation to the payer. Never automatic;
+        staff clicks this once they've confirmed the invoice is correct."""
+        doc = self.get_object()
+        if not doc.is_issued:
+            return Response({"error": "Confirmá la factura antes de enviarla."}, status=status.HTTP_400_BAD_REQUEST)
+        ok, error = _send_document_email(doc)
+        if not ok:
+            return Response({"error": error}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"ok": True})
 
     def destroy(self, request, *args, **kwargs):
         if request.user.role == "reception":

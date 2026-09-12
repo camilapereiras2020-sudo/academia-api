@@ -858,15 +858,78 @@ def _prepare_invoice_pdf(pago, tipo="factura"):
     return num_doc, tipo_doc, pdf_bytes, fecha, emisor
 
 
+def generate_preview_pdf_bytes(pago) -> bytes:
+    """A look-before-you-confirm PDF for a pago that hasn't been invoiced
+    yet — same layout as the real thing, but with no número asignado (a
+    "(borrador)" placeholder) and a BORRADOR watermark, and it never touches
+    numero_factura_reservado or the Emisor's counter. Purely a rendering —
+    no DB writes at all, so it's safe to call as many times as staff wants
+    while they're still reviewing/editing the pago.
+    """
+    alumno_adulto_sin_pagador = (
+        not pago.pagador_id and pago.alumno_id and getattr(pago.alumno, "es_adulto", False)
+    )
+    if pago.estado_carga == "pendiente_completar" or not pago.alumno_id or (
+        not pago.pagador_id and not alumno_adulto_sin_pagador
+    ):
+        raise ValueError(f"Pago {pago.id} está incompleto — complétalo antes de previsualizar.")
+
+    emisor = pago.emisor
+    if emisor is None:
+        raise ValueError(f"Pago {pago.id} has no emisor assigned.")
+
+    pagador = pago.pagador
+    alumno  = pago.alumno
+    grupo   = pago.grupo
+    metodo  = pago.metodo or ""
+    pagador_nombre, pagador_nif, pagador_tel, pagador_email = _pagador_display_fields(pagador, alumno)
+    tipo_doc = tipo_doc_for_metodo(metodo)
+
+    fecha = pago.fecha or date.today()
+    if isinstance(fecha, str):
+        fecha = date.fromisoformat(fecha)
+
+    theme = THEME_RANGERS if getattr(emisor, "slug", "") == "rangers" else THEME_CAMIANDCO
+
+    return generate_pdf_bytes(
+        academia_nombre   = emisor.nombre,
+        academia_autonoma = emisor.autonoma,
+        academia_dir      = emisor.direccion,
+        academia_ciudad   = emisor.ciudad,
+        academia_tel      = emisor.telefono,
+        academia_email    = getattr(emisor, "email", "") or "",
+        academia_cif      = emisor.nif,
+        iban              = emisor.iban,
+        pagador_nombre  = pagador_nombre,
+        pagador_nif     = pagador_nif,
+        pagador_tel     = pagador_tel,
+        pagador_email   = pagador_email,
+        alumno_nombre   = alumno.nombre,
+        grupo_nombre    = grupo.nombre if grupo else "",
+        periodo         = pago.periodo,
+        mensualidad     = pago.mensualidad,
+        descuento       = pago.descuento,
+        extras          = pago.extras or [],
+        total           = pago.total,
+        metodo          = metodo,
+        concepto_libre  = getattr(pago, "concepto_libre", "") or "",
+        num_doc         = "(borrador)",
+        fecha           = fecha,
+        tipo            = tipo_doc,
+        theme           = theme,
+        watermark       = "BORRADOR",
+    )
+
+
 def generate_invoice_for_pago(pago, tipo="factura"):
     """Generate PDF for a Pago using its Emisor, then upload to Drive
     synchronously. Returns (num_doc, drive_file_id, tipo_doc).
 
     This blocks on — and fails if — the Drive upload, so it's only meant for
     admin/maintenance code (healthcheck.py, fix_missing_invoices.py) that
-    explicitly wants to know Drive's result. User-facing request handlers
-    (documentos.views.generar, pagos.views._issue_invoice) use
-    generate_invoice_pdf_async instead, which never touches Drive inline.
+    explicitly wants to know Drive's result. The user-facing confirm action
+    (documentos.views.generar) uses generate_invoice_pdf_async instead,
+    which never touches Drive inline.
     """
     num_doc, tipo_doc, pdf_bytes, fecha, emisor = _prepare_invoice_pdf(pago, tipo)
 

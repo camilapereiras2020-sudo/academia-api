@@ -221,12 +221,11 @@ class DraftCompletionFlowTests(TestCase):
         self.assertEqual(row["sugerencia_alumno"]["id"], tere.id)
         self.assertEqual(row["sugerencia_alumno"]["score"], 1.0)
 
-    @patch("modules.documentos.sheets_log.log_emision")
-    @patch("modules.pagos.views._send_payment_email")
-    @patch("modules.documentos.invoice_service.generate_invoice_pdf_async")
-    def test_patch_completes_draft_and_calls_generation_exactly_once(self, mock_generate, mock_email, mock_log_emision):
-        mock_generate.return_value = ("CC252-26", "factura", b"%PDF-fake", lambda documento_id: None)
-
+    def test_patch_completes_draft_without_auto_invoicing(self):
+        """Completing a draft's missing alumno/pagador makes it "completo",
+        but invoicing is never automatic (2026-09 redesign) — even a
+        pre-reserved número (from a bulk import) stays reserved-but-unissued
+        until staff explicitly confirms via documentos/generar."""
         resp = self.client.patch(
             f"/api/v1/pagos/{self.draft.id}/",
             {"alumno": self.alumno.id, "pagador": self.pagador.id},
@@ -238,9 +237,8 @@ class DraftCompletionFlowTests(TestCase):
         self.assertEqual(self.draft.estado_carga, "completo")
         self.assertEqual(self.draft.alumno_id, self.alumno.id)
         self.assertEqual(self.draft.pagador_id, self.pagador.id)
-        mock_generate.assert_called_once()
-        # confirms the reserved number path, not a freshly allocated one
-        self.assertEqual(self.draft.num_doc, "CC252-26")
+        self.assertEqual(self.draft.num_doc, "")
+        self.assertFalse(self.draft.documentos.exists())
 
     def test_patch_without_alumno_pagador_stays_pending(self):
         resp = self.client.patch(
@@ -266,8 +264,7 @@ class DraftCompletionFlowTests(TestCase):
         resp = self.client.patch(f"/api/v1/pagos/{self.draft.id}/", {"alumno": None}, format="json")
         self.assertEqual(resp.status_code, 400)
 
-    @patch("modules.pagos.views._issue_invoice")
-    def test_create_with_guardar_como_borrador_skips_invoice_and_stays_pending(self, mock_issue):
+    def test_create_with_guardar_como_borrador_stays_pending(self):
         resp = self.client.post(
             "/api/v1/pagos/",
             {
@@ -284,36 +281,17 @@ class DraftCompletionFlowTests(TestCase):
         self.assertIsNone(pago.pagador_id)
         self.assertEqual(pago.num_doc, "")
         self.assertEqual(pago.numero_factura_reservado, "")
-        mock_issue.assert_not_called()
 
-    @patch("modules.pagos.views._issue_invoice")
-    def test_create_without_guardar_como_borrador_issues_normally(self, mock_issue):
+    def test_create_without_guardar_como_borrador_never_auto_invoices(self):
+        """2026-09 redesign: no pago ever gets a número/PDF/email just from
+        being created — staff always confirms explicitly (documentos/generar
+        or generar-combinado), so a mistake caught before confirming needs
+        no formal anulación, just a fix."""
         resp = self.client.post(
             "/api/v1/pagos/",
             {
                 "periodo": "2026-07", "total": 90, "metodo": "efectivo", "marca": "cami_and_co",
                 "alumno": self.alumno.id, "pagador": self.pagador.id,
-            },
-            format="json",
-        )
-        self.assertEqual(resp.status_code, 201, resp.content)
-        pago = Pago.objects.get(id=resp.json()["id"])
-        self.assertEqual(pago.estado_carga, "completo")
-        mock_issue.assert_called_once()
-
-    @patch("modules.pagos.views._issue_invoice")
-    def test_create_with_diferir_factura_skips_invoice_but_stays_completo(self, mock_issue):
-        """diferir_factura is for a sibling's pago meant to be combined into
-        one family invoice later (documentos/generar-combinado) — unlike
-        guardar_como_borrador, the data is complete, so estado_carga must
-        end up "completo" (that's what the Payer page's pending-to-combine
-        list filters on), just with no individual Documento issued yet."""
-        resp = self.client.post(
-            "/api/v1/pagos/",
-            {
-                "periodo": "2026-07", "total": 90, "metodo": "efectivo", "marca": "cami_and_co",
-                "alumno": self.alumno.id, "pagador": self.pagador.id,
-                "diferir_factura": True,
             },
             format="json",
         )
@@ -321,19 +299,7 @@ class DraftCompletionFlowTests(TestCase):
         pago = Pago.objects.get(id=resp.json()["id"])
         self.assertEqual(pago.estado_carga, "completo")
         self.assertEqual(pago.num_doc, "")
-        mock_issue.assert_not_called()
-
-    @patch("modules.pagos.views._issue_invoice")
-    def test_patch_completes_draft_with_diferir_factura_skips_invoice(self, mock_issue):
-        resp = self.client.patch(
-            f"/api/v1/pagos/{self.draft.id}/",
-            {"alumno": self.alumno.id, "pagador": self.pagador.id, "diferir_factura": True},
-            format="json",
-        )
-        self.assertEqual(resp.status_code, 200, resp.content)
-        self.draft.refresh_from_db()
-        self.assertEqual(self.draft.estado_carga, "completo")
-        mock_issue.assert_not_called()
+        self.assertFalse(pago.documentos.exists())
 
     def test_create_without_marca_is_rejected(self):
         # marca has a model-level default ("rangers_academy") purely for
@@ -373,12 +339,15 @@ class DraftCompletionFlowTests(TestCase):
     @patch("modules.documentos.invoice_service.upload_to_drive")
     def test_full_pipeline_end_to_end_with_mocked_external_calls(self, mock_upload, mock_resend_send, mock_log_emision):
         """Create -> appear in batch review -> complete via the exact same PATCH
-        the review screen's Save button issues -> real number allocation, real
-        PDF generation, real email-content building -- only the three actual
-        network calls (Drive upload, Resend send, Sheets log) are intercepted.
-        EMAIL_SENDING_ENABLED is force-enabled for this test only, since it's
-        specifically verifying the resend call gets made; the kill switch
-        defaults to off everywhere else.
+        the review screen's Save button issues -> stays un-invoiced (2026-09
+        redesign: nothing is ever automatic) -> staff explicitly confirms
+        (documentos/generar: real number allocation, real PDF generation) ->
+        staff explicitly sends (documentos/enviar: real email-content
+        building) -- only the three actual network calls (Drive upload,
+        Resend send, Sheets log) are intercepted. EMAIL_SENDING_ENABLED is
+        force-enabled for this test only, since it's specifically verifying
+        the resend call gets made; the kill switch defaults to off everywhere
+        else, and even then nothing sends without the explicit enviar call.
         """
         mock_upload.return_value = "FAKE_DRIVE_FILE_ID_FOR_TEST"
 
@@ -393,7 +362,7 @@ class DraftCompletionFlowTests(TestCase):
         create_resp = self.client.post(
             "/api/v1/pagos/",
             {
-                "periodo": "2026-07", "total": 123.45, "metodo": "transferencia",
+                "periodo": "2026-07", "fecha": "2026-07-15", "total": 123.45, "metodo": "transferencia",
                 "marca": "cami_and_co", "guardar_como_borrador": True,
             },
             format="json",
@@ -418,10 +387,24 @@ class DraftCompletionFlowTests(TestCase):
 
         draft = Pago.objects.get(id=draft_id)
         self.assertEqual(draft.estado_carga, "completo")
+        # Still no número, no PDF, no email -- completing a draft's data is
+        # not the same thing as confirming its invoice.
+        self.assertEqual(draft.num_doc, "")
+        mock_upload.assert_not_called()
+        mock_resend_send.assert_not_called()
+
+        # 4) staff explicitly confirms -- this is the only thing that ever
+        # assigns a número and renders/stores the real PDF
+        generar_resp = self.client.post("/api/v1/documentos/generar/", {"pago_id": draft.id}, format="json")
+        self.assertEqual(generar_resp.status_code, 201, generar_resp.content)
+        documento_id = generar_resp.json()["id"]
+
+        draft.refresh_from_db()
         self.assertTrue(draft.num_doc.startswith("CC"))
         self.assertNotEqual(draft.num_doc, "")
 
-        # 4) inspect exactly what would have gone to Drive
+        # 5) inspect exactly what would have gone to Drive -- confirming does
+        # upload, it just never emails on its own
         mock_upload.assert_called_once()
         pdf_bytes, filename, year, month, folder_id = mock_upload.call_args[0][:5]
         self.assertTrue(pdf_bytes[:4] == b"%PDF")   # a real PDF was actually built
@@ -430,8 +413,12 @@ class DraftCompletionFlowTests(TestCase):
         self.assertEqual(year, 2026)
         self.assertEqual(month, 7)
         self.assertEqual(folder_id, "FAKE_FOLDER_ID_FOR_TEST")
+        mock_resend_send.assert_not_called()
 
-        # 5) inspect exactly what would have gone to the email API
+        # 6) staff explicitly sends -- only now does the email actually go out
+        enviar_resp = self.client.post(f"/api/v1/documentos/{documento_id}/enviar/")
+        self.assertEqual(enviar_resp.status_code, 200, enviar_resp.content)
+
         mock_resend_send.assert_called_once()
         email_payload = mock_resend_send.call_args[0][0]
         self.assertEqual(email_payload["to"], ["synthetic-e2e@example.test"])
@@ -439,7 +426,6 @@ class DraftCompletionFlowTests(TestCase):
         self.assertIn("Synthetic Alumno E2E", email_payload["html"])
         self.assertIn("Synthetic Pagador E2E", email_payload["html"])
         self.assertIn("123,45", email_payload["html"])  # eur-formatted total
-        self.assertIn("Cami&Co", email_payload["html"])  # emisor name
 
         print("\n" + "=" * 70)
         print("DRIVE UPLOAD CALL (mocked -- nothing actually sent):")
@@ -449,10 +435,146 @@ class DraftCompletionFlowTests(TestCase):
         print(f"  to={email_payload['to']!r}")
         print(f"  subject={email_payload['subject']!r}")
         print(f"  from={email_payload['from']!r}")
-        print(f"  html contains: num_doc={draft.num_doc in email_payload['html']}, "
-              f"alumno={'Synthetic Alumno E2E' in email_payload['html']}, "
-              f"pagador={'Synthetic Pagador E2E' in email_payload['html']}, "
-              f"total='123,45' in html={'123,45' in email_payload['html']}, "
-              f"emisor='Cami&Co' in html={'Cami&Co' in email_payload['html']}")
         print(f"  full html length: {len(email_payload['html'])} chars")
         print("=" * 70)
+
+
+class PreviewFacturaTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username="preview_user", email="preview@example.com", password="x")
+        self.client = APIClient()
+        self.client.force_authenticate(self.user)
+        self.emisor = Emisor.objects.create(
+            academia=self.user, slug="camiandco", nombre="Cami&Co", autonoma="Test",
+            nif="X", direccion="X", ciudad="X", factura_prefix="CC", recibo_prefix="RE",
+        )
+        self.pagador = Pagador.objects.create(academia=self.user, nombre="Preview Pagador")
+        self.alumno = Alumno.objects.create(academia=self.user, nombre="Preview Alumno", pagador=self.pagador)
+        self.pago = Pago.objects.create(
+            academia=self.user, emisor=self.emisor, marca="cami_and_co",
+            alumno=self.alumno, pagador=self.pagador,
+            periodo="2026-09", fecha="2026-09-01",
+            mensualidad=80, descuento=0, extras=[], total=80,
+            metodo="transferencia", estado="pendiente", estado_carga="completo",
+        )
+
+    def test_preview_returns_pdf_without_reserving_a_number(self):
+        resp = self.client.get(f"/api/v1/pagos/{self.pago.id}/preview-factura/")
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(resp["Content-Type"], "application/pdf")
+        self.assertTrue(resp.content[:4] == b"%PDF")
+        self.pago.refresh_from_db()
+        self.assertEqual(self.pago.numero_factura_reservado, "")
+        self.assertEqual(self.pago.num_doc, "")
+        self.assertFalse(self.pago.documentos.exists())
+
+    def test_preview_incomplete_pago_returns_400(self):
+        incompleto = Pago.objects.create(
+            academia=self.user, emisor=self.emisor, marca="cami_and_co",
+            periodo="2026-09", fecha="2026-09-01",
+            mensualidad=0, descuento=0, extras=[], total=0,
+            metodo="", estado="pendiente", estado_carga="pendiente_completar",
+        )
+        resp = self.client.get(f"/api/v1/pagos/{incompleto.id}/preview-factura/")
+        self.assertEqual(resp.status_code, 400)
+
+
+class EnviarDocumentoTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username="enviar_user", email="enviar@example.com", password="x")
+        self.client = APIClient()
+        self.client.force_authenticate(self.user)
+        self.emisor = Emisor.objects.create(
+            academia=self.user, slug="camiandco", nombre="Cami&Co", autonoma="Test",
+            nif="X", direccion="X", ciudad="X", factura_prefix="CC", recibo_prefix="RE",
+        )
+        self.pagador = Pagador.objects.create(academia=self.user, nombre="Enviar Pagador", email="enviar-pagador@example.test")
+        self.alumno = Alumno.objects.create(academia=self.user, nombre="Enviar Alumno", pagador=self.pagador)
+        self.pago = Pago.objects.create(
+            academia=self.user, emisor=self.emisor, marca="cami_and_co",
+            alumno=self.alumno, pagador=self.pagador,
+            periodo="2026-09", fecha="2026-09-01",
+            mensualidad=80, descuento=0, extras=[], total=80,
+            metodo="transferencia", estado="pendiente", estado_carga="completo",
+        )
+
+    def test_enviar_rejects_unconfirmed_documento(self):
+        from modules.documentos.models import Documento
+        borrador = Documento.objects.create(
+            academia=self.user, pago=self.pago, tipo="factura",
+            nombre="x.pdf", num_doc="", estado="borrador",
+        )
+        resp = self.client.post(f"/api/v1/documentos/{borrador.id}/enviar/")
+        self.assertEqual(resp.status_code, 400)
+
+    @patch.dict(os.environ, {"EMAIL_SENDING_ENABLED": "false"})
+    def test_enviar_off_when_email_sending_disabled(self):
+        from modules.documentos.models import Documento
+        doc = Documento.objects.create(
+            academia=self.user, pago=self.pago, tipo="factura",
+            nombre="CC1-26.pdf", num_doc="CC1-26", estado="emitida",
+            pdf_data=b"%PDF-fake",
+        )
+        resp = self.client.post(f"/api/v1/documentos/{doc.id}/enviar/")
+        self.assertEqual(resp.status_code, 400, resp.content)
+        self.assertIn("desactivado", resp.json()["error"])
+
+
+class GenerarMesTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username="mes_user", email="mes@example.com", password="x")
+        self.client = APIClient()
+        self.client.force_authenticate(self.user)
+        Emisor.objects.create(
+            academia=self.user, slug="camiandco", nombre="Cami&Co", autonoma="Test",
+            nif="X", direccion="X", ciudad="X", factura_prefix="CC", recibo_prefix="RE",
+        )
+        Emisor.objects.create(
+            academia=self.user, slug="rangers", nombre="Rangers Academy", autonoma="Test",
+            nif="X2", direccion="X", ciudad="X", factura_prefix="RA", recibo_prefix="RR",
+        )
+        self.pagador = Pagador.objects.create(academia=self.user, nombre="Mes Pagador")
+        self.grupo = Grupo.objects.create(academia=self.user, marca="cami_and_co", nombre="Mes Grupo", nivel="A1", tarifa=75)
+        self.alumno = Alumno.objects.create(academia=self.user, nombre="Mes Alumno", marca="cami_and_co", pagador=self.pagador)
+        self.alumno.grupos.add(self.grupo)
+
+    def test_generar_mes_creates_one_undated_pago_per_alumno(self):
+        resp = self.client.post("/api/v1/pagos/generar-mes/", {"periodo": "2026-09"}, format="json")
+        self.assertEqual(resp.status_code, 200, resp.content)
+        data = resp.json()
+        self.assertEqual(len(data["creados"]), 1)
+        self.assertEqual(data["creados"][0]["alumno"], "Mes Alumno")
+
+        pago = Pago.objects.get(alumno=self.alumno, periodo="2026-09")
+        self.assertEqual(pago.estado_carga, "completo")
+        self.assertEqual(pago.num_doc, "")
+        self.assertEqual(float(pago.total), 75.0)
+        self.assertEqual(pago.pagador_id, self.pagador.id)
+
+    def test_generar_mes_is_idempotent(self):
+        self.client.post("/api/v1/pagos/generar-mes/", {"periodo": "2026-09"}, format="json")
+        resp2 = self.client.post("/api/v1/pagos/generar-mes/", {"periodo": "2026-09"}, format="json")
+        self.assertEqual(resp2.status_code, 200, resp2.content)
+        self.assertEqual(len(resp2.json()["creados"]), 0)
+        self.assertEqual(Pago.objects.filter(alumno=self.alumno, periodo="2026-09").count(), 1)
+
+    def test_generar_mes_skips_alumno_without_grupo(self):
+        Alumno.objects.create(academia=self.user, nombre="Sin Grupo", marca="cami_and_co", pagador=self.pagador)
+        resp = self.client.post("/api/v1/pagos/generar-mes/", {"periodo": "2026-09"}, format="json")
+        omitidos_nombres = [o["alumno"] for o in resp.json()["omitidos"]]
+        self.assertIn("Sin Grupo", omitidos_nombres)
+
+    def test_generar_mes_skips_alumno_without_pagador(self):
+        Alumno.objects.create(academia=self.user, nombre="Sin Pagador", marca="cami_and_co").grupos.add(self.grupo)
+        resp = self.client.post("/api/v1/pagos/generar-mes/", {"periodo": "2026-09"}, format="json")
+        omitidos_nombres = [o["alumno"] for o in resp.json()["omitidos"]]
+        self.assertIn("Sin Pagador", omitidos_nombres)
+
+    def test_generar_mes_reception_forbidden(self):
+        reception = User.objects.create_user(
+            username="mes_reception", email="mesr@example.com", password="x",
+            role="reception", academia_owner=self.user,
+        )
+        self.client.force_authenticate(reception)
+        resp = self.client.post("/api/v1/pagos/generar-mes/", {"periodo": "2026-09"}, format="json")
+        self.assertEqual(resp.status_code, 403)

@@ -109,75 +109,6 @@ def _resolve_emisor(user, emisor_id=None, marca=None):
     return Emisor.objects.filter(academia=user, slug=slug).first()
 
 
-def _issue_invoice(pago):
-    """Generate the PDF, upload to Drive, create the Documento, email the
-    payer, and log to the Sheet. Shared by perform_create (normal pagos) and
-    perform_update's draft-completion path (bulk-imported pagos).
-    """
-    if not pago.emisor:
-        logger.error("No emisor found for pago %s — skipping invoice generation", pago.id)
-        return
-
-    from django.db import transaction
-    from modules.documentos.models import Documento
-
-    with transaction.atomic():
-        # Lock the Pago row so two near-simultaneous calls (double-click,
-        # two tabs/devices, or perform_create racing perform_update) can't
-        # both pass the "already has a documento" check before either one
-        # creates it — same select_for_update pattern already used for the
-        # Emisor row in invoice_service.generate_invoice_for_pago.
-        locked_pago = Pago.objects.select_for_update().get(pk=pago.pk)
-        if locked_pago.documentos.exclude(estado="borrador").exists():
-            # A non-borrador Documento already exists for this pago — never
-            # allocate a second num_doc for the same real-world payment. Editing
-            # a pago (status, grupo, etc.) after its invoice was already issued
-            # must not regenerate one.
-            logger.info("Pago %s already has an issued documento — skipping regeneration", pago.id)
-            return
-
-        try:
-            from modules.documentos.invoice_service import generate_invoice_pdf_async
-            num_doc, tipo, pdf_bytes, schedule_drive_upload = generate_invoice_pdf_async(pago)
-            doc = Documento.objects.create(
-                academia   = pago.academia,
-                pago       = pago,
-                tipo       = tipo,
-                nombre     = f"{num_doc}.pdf",
-                num_doc    = num_doc,
-                s3_key     = "",              # filled in by the background Drive upload below
-                local_path = "",
-                pdf_data   = pdf_bytes,        # authoritative copy — independent of Drive
-                mime_type  = "application/pdf",
-                estado     = "emitida",
-                emitida_at = timezone.now(),
-            )
-            pago.num_doc = num_doc
-            pago.save(update_fields=["num_doc"])
-        except Exception as e:
-            err = str(e)
-            logger.exception("Invoice auto-generation failed for pago %s", pago.id)
-            note = f"⚠ Factura no generada: {err}"
-            pago.notas = ((pago.notas or "") + "\n" + note).strip()
-            pago.save(update_fields=["notas"])
-            return
-
-    # Outside the lock (row is now committed): Drive upload runs silently in
-    # the background and never blocks or fails invoice generation. Email +
-    # sheet logging are likewise best-effort side effects that shouldn't
-    # hold the Pago row locked while they make external calls.
-    schedule_drive_upload(doc.id)
-    try:
-        _send_payment_email(pago, num_doc, pago.emisor.nombre)
-    except Exception:
-        logger.exception("Payment confirmation email failed for pago %s", pago.id)
-    try:
-        from modules.documentos.sheets_log import log_emision
-        log_emision(doc)
-    except Exception:
-        logger.exception("Sheet log failed for pago %s (non-critical)", pago.id)
-
-
 class PagoViewSet(ModelViewSet):
     serializer_class   = PagoSerializer
     permission_classes = [permissions.IsAuthenticated, ReadOnlyForReception]
@@ -207,6 +138,89 @@ class PagoViewSet(ModelViewSet):
         if marca:   qs = qs.filter(marca=marca)
         if estado_carga: qs = qs.filter(estado_carga=estado_carga)
         return qs
+
+    @action(detail=True, methods=["get"], url_path="preview-factura")
+    def preview_factura(self, request, pk=None):
+        """Unnumbered, watermarked look at what this pago's invoice/receipt
+        would look like — for reviewing before "Confirmar factura" actually
+        assigns a número. Pure rendering, no DB writes."""
+        from django.http import HttpResponse
+        from modules.documentos.invoice_service import generate_preview_pdf_bytes
+
+        pago = self.get_object()
+        try:
+            pdf_bytes = generate_preview_pdf_bytes(pago)
+        except ValueError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        response = HttpResponse(pdf_bytes, content_type="application/pdf")
+        response["Content-Disposition"] = f'inline; filename="borrador-{pago.id}.pdf"'
+        return response
+
+    @action(detail=False, methods=["post"], url_path="generar-mes")
+    def generar_mes(self, request):
+        """Mid-month bulk draft generation: one un-invoiced Pago per actively
+        enrolled alumno, priced off their (first, by name) assigned Grupo's
+        tarifa — same "solo se exportó X, revisar el resto a mano" simplification
+        already used by export_alumnos_to_sheet.py for a multi-grupo alumno.
+        Nothing here ever gets a número/PDF/email — these are exactly the
+        same kind of "completo pero sin facturar" pago a manually-created one
+        is; staff reviews/adjusts (family discounts, extras, matrícula) and
+        confirms each one same as always. Safe to re-run for the same
+        periodo — an alumno who already has one is skipped, not duplicated.
+        """
+        periodo = (request.data.get("periodo") or "").strip() or timezone.now().strftime("%Y-%m")
+
+        from modules.alumnos.models import Alumno
+
+        alumnos_qs = Alumno.objects.filter(
+            academia=request.user.tenant, activo=True, empresa__isnull=True,
+        ).prefetch_related("inscripciones__grupo").select_related("pagador")
+        scope = marca_scope_for(request.user)
+        if scope:
+            alumnos_qs = alumnos_qs.filter(marca=scope)
+
+        ya_facturados = set(
+            Pago.objects.filter(academia=request.user.tenant, periodo=periodo)
+            .values_list("alumno_id", flat=True)
+        )
+
+        creados, omitidos = [], []
+        for alumno in alumnos_qs:
+            if alumno.id in ya_facturados:
+                continue
+
+            inscripciones = sorted(alumno.inscripciones.all(), key=lambda i: i.grupo.nombre)
+            if not inscripciones:
+                omitidos.append({"alumno": alumno.nombre, "motivo": "Sin grupo asignado."})
+                continue
+            grupo = inscripciones[0].grupo
+            if len(inscripciones) > 1:
+                omitidos_note = f"Matriculado en {len(inscripciones)} grupos, se usó '{grupo.nombre}' — revisar el resto a mano."
+            else:
+                omitidos_note = None
+
+            if not alumno.pagador_id and not alumno.es_adulto:
+                omitidos.append({"alumno": alumno.nombre, "motivo": "Sin pagador asignado."})
+                continue
+
+            emisor = _resolve_emisor(request.user.tenant, None, alumno.marca)
+            if not emisor:
+                omitidos.append({"alumno": alumno.nombre, "motivo": f"Sin emisor configurado para {alumno.marca}."})
+                continue
+
+            pago = Pago.objects.create(
+                academia=request.user.tenant, marca=alumno.marca, emisor=emisor,
+                alumno=alumno, pagador=alumno.pagador, grupo=grupo,
+                periodo=periodo, mensualidad=grupo.tarifa, descuento=0, extras=[],
+                total=grupo.tarifa, metodo=alumno.pagador.metodo if alumno.pagador else "",
+                estado="pendiente", estado_carga="completo",
+                notas=f"Generado automáticamente para {periodo}." + (f" {omitidos_note}" if omitidos_note else ""),
+            )
+            creados.append({"pago_id": pago.id, "alumno": alumno.nombre, "total": str(pago.total)})
+            if omitidos_note:
+                omitidos.append({"alumno": alumno.nombre, "motivo": omitidos_note, "aviso": True})
+
+        return Response({"periodo": periodo, "creados": creados, "omitidos": omitidos})
 
     @action(detail=False, methods=["get"], url_path="sugerencias")
     def sugerencias(self, request):
@@ -282,20 +296,13 @@ class PagoViewSet(ModelViewSet):
             pago.save(update_fields=["estado_carga"])
             return
 
-        if pago.estado_carga == "pendiente_completar":
-            return  # created directly as a draft some other way (e.g. bulk import)
-
-        if self.request.data.get("diferir_factura"):
-            # Deliberate request-level signal, same pattern as
-            # guardar_como_borrador — the pago's data IS complete (unlike a
-            # borrador), it's just meant to be combined with a sibling's
-            # pagos into one family invoice later (documentos/generar-combinado)
-            # instead of getting its own individual one right now. Stays
-            # estado_carga="completo" with no Documento/num_doc yet — exactly
-            # the shape the Payer page's "pendientes de facturar" list looks for.
-            return
-
-        _issue_invoice(pago)
+        # Invoicing is never automatic (2026-09 redesign): a pago is created
+        # "completo" but un-invoiced — no num_doc, no PDF, no email — until
+        # staff explicitly confirms it (DocumentoViewSet.generar/generar_combinado).
+        # While the platform's still being tested, an auto-assigned number on
+        # a pago that turns out to have a mistake would need a formal anulación
+        # to correct; a draft that was never confirmed just gets fixed and
+        # confirmed once it's right.
 
     def perform_update(self, serializer):
         scope = marca_scope_for(self.request.user)
@@ -317,8 +324,9 @@ class PagoViewSet(ModelViewSet):
                 pago.emisor = _resolve_emisor(self.request.user.tenant, self.request.data.get("emisor"), pago.marca)
             pago.estado_carga = "completo"
             pago.save(update_fields=["estado_carga", "emisor"])
-            if not self.request.data.get("diferir_factura"):
-                _issue_invoice(pago)
+            # Completing a draft no longer auto-invoices either — see
+            # perform_create's comment. Staff confirms explicitly once it's
+            # been reviewed, same as any other completo, un-invoiced pago.
 
     def destroy(self, request, *args, **kwargs):
         pago = self.get_object()
