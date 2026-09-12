@@ -21,4 +21,5 @@ urlpatterns = [
     path(API_PREFIX + "profesores/", include("modules.profesores.urls")),
     path(API_PREFIX + "whatsapp-reply/", include("modules.whatsapp_reply.urls")),
     path(API_PREFIX + "dashboard/", include("modules.dashboard.urls")),
+    path(API_PREFIX + "avisos/", include("modules.avisos.urls")),
 ]
