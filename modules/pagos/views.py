@@ -285,6 +285,16 @@ class PagoViewSet(ModelViewSet):
         if pago.estado_carga == "pendiente_completar":
             return  # created directly as a draft some other way (e.g. bulk import)
 
+        if self.request.data.get("diferir_factura"):
+            # Deliberate request-level signal, same pattern as
+            # guardar_como_borrador — the pago's data IS complete (unlike a
+            # borrador), it's just meant to be combined with a sibling's
+            # pagos into one family invoice later (documentos/generar-combinado)
+            # instead of getting its own individual one right now. Stays
+            # estado_carga="completo" with no Documento/num_doc yet — exactly
+            # the shape the Payer page's "pendientes de facturar" list looks for.
+            return
+
         _issue_invoice(pago)
 
     def perform_update(self, serializer):
@@ -307,7 +317,8 @@ class PagoViewSet(ModelViewSet):
                 pago.emisor = _resolve_emisor(self.request.user.tenant, self.request.data.get("emisor"), pago.marca)
             pago.estado_carga = "completo"
             pago.save(update_fields=["estado_carga", "emisor"])
-            _issue_invoice(pago)
+            if not self.request.data.get("diferir_factura"):
+                _issue_invoice(pago)
 
     def destroy(self, request, *args, **kwargs):
         pago = self.get_object()

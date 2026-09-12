@@ -301,6 +301,40 @@ class DraftCompletionFlowTests(TestCase):
         self.assertEqual(pago.estado_carga, "completo")
         mock_issue.assert_called_once()
 
+    @patch("modules.pagos.views._issue_invoice")
+    def test_create_with_diferir_factura_skips_invoice_but_stays_completo(self, mock_issue):
+        """diferir_factura is for a sibling's pago meant to be combined into
+        one family invoice later (documentos/generar-combinado) — unlike
+        guardar_como_borrador, the data is complete, so estado_carga must
+        end up "completo" (that's what the Payer page's pending-to-combine
+        list filters on), just with no individual Documento issued yet."""
+        resp = self.client.post(
+            "/api/v1/pagos/",
+            {
+                "periodo": "2026-07", "total": 90, "metodo": "efectivo", "marca": "cami_and_co",
+                "alumno": self.alumno.id, "pagador": self.pagador.id,
+                "diferir_factura": True,
+            },
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 201, resp.content)
+        pago = Pago.objects.get(id=resp.json()["id"])
+        self.assertEqual(pago.estado_carga, "completo")
+        self.assertEqual(pago.num_doc, "")
+        mock_issue.assert_not_called()
+
+    @patch("modules.pagos.views._issue_invoice")
+    def test_patch_completes_draft_with_diferir_factura_skips_invoice(self, mock_issue):
+        resp = self.client.patch(
+            f"/api/v1/pagos/{self.draft.id}/",
+            {"alumno": self.alumno.id, "pagador": self.pagador.id, "diferir_factura": True},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.draft.refresh_from_db()
+        self.assertEqual(self.draft.estado_carga, "completo")
+        mock_issue.assert_not_called()
+
     def test_create_without_marca_is_rejected(self):
         # marca has a model-level default ("rangers_academy") purely for
         # internal scripts (healthcheck.py) that don't care -- the real API
