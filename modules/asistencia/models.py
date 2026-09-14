@@ -3,7 +3,7 @@ from django.contrib.auth import get_user_model
 
 User = get_user_model()
 
-ESTADO_CHOICES = [("present", "Presente"), ("absent", "Ausente"), ("makeup", "Recuperacion"), ("guest", "Invitado/Traslado")]
+ESTADO_CHOICES = [("present", "Presente"), ("absent", "Ausente"), ("makeup", "Recuperacion"), ("guest", "Invitado/Traslado"), ("other", "Otro")]
 
 class Sesion(models.Model):
     academia = models.ForeignKey(User, on_delete=models.CASCADE, related_name="sesiones")
