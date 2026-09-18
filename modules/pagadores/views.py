@@ -6,7 +6,9 @@ from rest_framework.views import APIView
 from rest_framework.viewsets import ModelViewSet
 from modules.authentication.rbac import NotReception, marca_scope_for
 from modules.core.mixins import ContactableViaPagadorMixin
-from modules.tarifas.pricing import perfil_semanal_alumno, precio_bono_familia, precio_clase_grupo
+from modules.tarifas.pricing import (
+    cuota_bono_familia_prorrateada, perfil_semanal_alumno, precio_clase_grupo,
+)
 from .models import Pagador
 from .serializers import PagadorSerializer
 
@@ -69,32 +71,29 @@ class PagadorCalculadoraView(APIView):
             total = Decimal("0")
 
             n_hermanos = len(perfiles)
-            es_bono_familia = (
-                n_hermanos in (2, 3, 4)
-                and perfiles[0]["duracion"] is not None
-                and all(
-                    p["dias"] == perfiles[0]["dias"] and p["duracion"] == perfiles[0]["duracion"]
-                    for p in perfiles
-                )
-            )
+            # Bono Familia se activa para 2-4 hermanos con perfil válido,
+            # sin exigir que coincidan en días/semana o duración — se
+            # reparte en partes iguales aunque vayan a distinto tramo o con
+            # otra profesora (regla confirmada 2026-09-19, ver
+            # tarifas.pricing.cuota_bono_familia_prorrateada).
+            es_bono_familia = n_hermanos in (2, 3, 4) and all(p["duracion"] is not None for p in perfiles)
 
             if es_bono_familia:
-                dias, duracion = perfiles[0]["dias"], perfiles[0]["duracion"]
-                encontrado = precio_bono_familia(dias, duracion, n_hermanos)
-                if encontrado:
-                    precio, descuento = encontrado
-                    total += Decimal(str(precio))
+                info, avisos_bono = cuota_bono_familia_prorrateada([p["alumno"] for p in perfiles])
+                avisos.extend(avisos_bono)
+                if info:
+                    total += info["total"]
                     items.append({
                         "tipo": "bono_familia",
                         "alumnos": [p["alumno"].nombre for p in perfiles],
                         "n_hermanos": n_hermanos,
-                        "dias_semana": dias, "duracion_min": duracion,
-                        "precio": precio, "descuento_pct": descuento,
+                        "perfiles": [
+                            {"alumno": p["alumno"].nombre, "dias_semana": p["dias"], "duracion_min": p["duracion"]}
+                            for p in perfiles
+                        ],
+                        "cuota_por_hermano": float(info["cuota_por_hermano"]),
+                        "precio": float(info["total"]),
                     })
-                else:
-                    avisos.append(
-                        f"Bono Familia ({n_hermanos} hermanos) fuera de tabla ({dias} días/sem, {duracion} min) — calcular a mano."
-                    )
             else:
                 for p in perfiles:
                     if p["duracion"] is None:

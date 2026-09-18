@@ -22,6 +22,18 @@ CURSO_CHOICES = [
     ("fp", "Formación Profesional"), ("adulto", "Adulto"), ("otro", "Otro"),
 ]
 
+# Modalidad del alumno puntual (cuánto y cómo se le cobra) — distinto de
+# Tarifa.NOMBRE_CHOICES (clase_grupo/bono_familia/...), que sigue
+# determinando qué tabla de precios aplica. HORA/HORA_Y_MEDIA se calculan
+# solas vía modules.tarifas.pricing; las privadas no tienen fórmula y se
+# cargan a mano (ver Alumno.cuota_manual).
+CODIGO_CLASE_CHOICES = [
+    ("HORA", "Clase grupo (1h/semana)"),
+    ("HORA_Y_MEDIA", "Clase grupo (1h30/semana)"),
+    ("PRIVADA", "Clase privada"),
+    ("PRIVADA_PROFESIONAL", "Clase privada profesional/adultos"),
+]
+
 
 class Alumno(models.Model):
     academia = models.ForeignKey(User, on_delete=models.CASCADE, related_name="alumnos")
@@ -49,6 +61,11 @@ class Alumno(models.Model):
     )
     es_fundae = models.BooleanField(default=False)
     es_adulto = models.BooleanField(default=False)
+    codigo_clase = models.CharField(max_length=20, choices=CODIGO_CLASE_CHOICES, blank=True)
+    # Precio mensual fijado a mano, sustituye al cálculo automático de
+    # pricing.calcular_cuota_alumno — para clases privadas (sin fórmula) y
+    # los casos Cami&Co cotizados fuera de tabla. None = seguir calculando solo.
+    cuota_manual = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
     nivel = models.CharField(max_length=10, blank=True)
     curso = models.CharField(max_length=20, choices=CURSO_CHOICES, blank=True)
     notas = models.TextField(blank=True)

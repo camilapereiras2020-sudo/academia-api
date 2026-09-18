@@ -41,3 +41,22 @@ class Tarifa(models.Model):
     def __str__(self):
         horas = f" ({self.horas_semanales}h/sem)" if self.horas_semanales else ""
         return f"{self.get_marca_display()} - {self.get_nombre_display()}{horas}"
+
+
+class CargoExtra(models.Model):
+    """Clase a mayores (refuerzo puntual, ej. pre-examen): un cargo suelto,
+    a mano, que se suma a la factura del alumno de ese mes sin tocar su
+    cuota fija. Precio siempre manual — no se intenta automatizar (ver
+    tarifas/pricing.py, que sí calcula la cuota base)."""
+    academia = models.ForeignKey(User, on_delete=models.CASCADE, related_name="cargos_extra")
+    alumno = models.ForeignKey("alumnos.Alumno", on_delete=models.CASCADE, related_name="cargos_extra")
+    concepto = models.CharField(max_length=200)
+    monto = models.DecimalField(max_digits=8, decimal_places=2)
+    fecha = models.DateField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-fecha", "-created_at"]
+
+    def __str__(self):
+        return f"{self.concepto} — {self.alumno} ({self.fecha})"

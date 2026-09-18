@@ -208,11 +208,20 @@ class PagoViewSet(ModelViewSet):
                 omitidos.append({"alumno": alumno.nombre, "motivo": f"Sin emisor configurado para {alumno.marca}."})
                 continue
 
+            # Clases a mayores (CargoExtra) del mismo período: se suman como
+            # líneas de extras aparte, sin tocar la mensualidad fija — un
+            # alumno solo puede tener un Pago por período (ya_facturados,
+            # arriba), así que no hay riesgo de duplicarlas en un rerun.
+            year, month = periodo.split("-")
+            cargos_extra = alumno.cargos_extra.filter(fecha__year=year, fecha__month=month)
+            extras = [{"concepto": c.concepto, "importe": float(c.monto)} for c in cargos_extra]
+            total = grupo.tarifa + sum(c.monto for c in cargos_extra)
+
             pago = Pago.objects.create(
                 academia=request.user.tenant, marca=alumno.marca, emisor=emisor,
                 alumno=alumno, pagador=alumno.pagador, grupo=grupo,
-                periodo=periodo, mensualidad=grupo.tarifa, descuento=0, extras=[],
-                total=grupo.tarifa, metodo=alumno.pagador.metodo if alumno.pagador else "",
+                periodo=periodo, mensualidad=grupo.tarifa, descuento=0, extras=extras,
+                total=total, metodo=alumno.pagador.metodo if alumno.pagador else "",
                 estado="pendiente", estado_carga="completo",
                 notas=f"Generado automáticamente para {periodo}." + (f" {omitidos_note}" if omitidos_note else ""),
             )
