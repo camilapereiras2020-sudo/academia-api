@@ -16,6 +16,7 @@ Update this file *and* the Word guide together if prices change for a new
 course year — there's no other source of truth to keep in sync with.
 """
 from collections import Counter
+from decimal import Decimal, ROUND_HALF_UP
 
 MATRICULA = 20  # one-off enrollment fee, per student, aparte de la cuota
 PRECIO_CLASE_PRIVADA_HORA = 35  # adult 1:1 professional classes, per hour
@@ -91,3 +92,96 @@ def perfil_semanal_alumno(alumno):
     duracion_predominante, _ = conteo.most_common(1)[0]
     aviso = "" if len(conteo) == 1 else "clases de distinta duración — revisar a mano"
     return dias_semana, duracion_predominante, aviso
+
+
+def _redondear_5(valor):
+    """Redondea a los 5€ más cercanos — misma convención que las tablas de
+    BONO_FAMILIA (ya redondeadas a mano por Cande)."""
+    valor = Decimal(str(valor))
+    return (valor / 5).quantize(Decimal("1"), rounding=ROUND_HALF_UP) * 5
+
+
+def cuota_bono_familia_prorrateada(alumnos_hermanos):
+    """Regla confirmada 2026-09-19: se suman los precios individuales de
+    Clase Grupo de cada hermano según su propio tramo de días/semana, se
+    aplica el 5% de descuento familiar sobre la suma, se redondea a los 5€
+    más cercanos, y ese total se reparte en PARTES IGUALES entre los
+    hermanos — sin importar que alguno vaya a más horas/semana o con otra
+    profesora (ver claude/cuota-mensual-y-clase-refuerzo-2026-09-18.md §3.1).
+
+    Returns (info, avisos). info is None if any hermano's profile is
+    missing/ambiguous or off-table — the caller should fall back to
+    "cuota manual" in that case; avisos explains why."""
+    perfiles = [(a, perfil_semanal_alumno(a)) for a in alumnos_hermanos]
+    avisos = []
+    suma = Decimal("0")
+    for alumno, (dias, duracion, aviso) in perfiles:
+        if aviso or duracion is None:
+            avisos.append(f"{alumno.nombre}: {aviso or 'sin horario asignado'}")
+            continue
+        encontrado = precio_clase_grupo(dias, duracion)
+        if not encontrado:
+            avisos.append(f"{alumno.nombre}: {dias} días/sem a {duracion} min no está en la tabla.")
+            continue
+        precio, _ = encontrado
+        suma += Decimal(str(precio))
+
+    if avisos:
+        return None, avisos
+
+    total = _redondear_5(suma * Decimal("0.95"))
+    n_hermanos = len(alumnos_hermanos)
+    cuota_por_hermano = (total / n_hermanos).quantize(Decimal("0.01"))
+    return {"cuota_por_hermano": cuota_por_hermano, "total": total, "n_hermanos": n_hermanos}, avisos
+
+
+def calcular_cuota_alumno(alumno):
+    """Cuota mensual automática para la ficha del alumno (AlumnoDetailPage).
+    Nunca lanza — cualquier caso no cubierto vuelve con cuota=None y un
+    aviso explicando por qué (para que el frontend muestre "precio manual").
+
+    Orden: precio manual cargado > clase privada (sin fórmula) > Bono
+    Familia prorrateado (2-4 hermanos activos no-adultos con el mismo
+    pagador) > Clase Grupo individual > sin tabla."""
+    if alumno.cuota_manual is not None:
+        return {"tipo": "manual", "cuota": float(alumno.cuota_manual), "avisos": []}
+
+    if alumno.codigo_clase in ("PRIVADA", "PRIVADA_PROFESIONAL"):
+        tarifa_hora = PRECIO_CLASE_PRIVADA_HORA if alumno.codigo_clase == "PRIVADA_PROFESIONAL" else 30
+        return {
+            "tipo": "privada_manual", "cuota": None, "tarifa_hora_referencia": tarifa_hora,
+            "avisos": ["Clase privada: tarifa por hora, no se calcula sola — cargar precio manual."],
+        }
+
+    dias, duracion, aviso = perfil_semanal_alumno(alumno)
+    if aviso or duracion is None:
+        return {"tipo": "sin_tabla", "cuota": None, "avisos": [aviso or "Sin horario asignado."]}
+
+    hermanos = []
+    if alumno.pagador_id:
+        hermanos = [a for a in alumno.pagador.alumnos.all() if a.activo and not a.es_adulto]
+
+    if len(hermanos) in (2, 3, 4):
+        info, avisos = cuota_bono_familia_prorrateada(hermanos)
+        if info:
+            return {
+                "tipo": "bono_familia", "cuota": float(info["cuota_por_hermano"]),
+                "total_bono": float(info["total"]), "n_hermanos": info["n_hermanos"],
+                "dias_semana": dias, "duracion_min": duracion, "avisos": avisos,
+            }
+        return {
+            "tipo": "sin_tabla", "cuota": None,
+            "dias_semana": dias, "duracion_min": duracion, "avisos": avisos,
+        }
+
+    encontrado = precio_clase_grupo(dias, duracion)
+    if not encontrado:
+        return {
+            "tipo": "sin_tabla", "cuota": None, "dias_semana": dias, "duracion_min": duracion,
+            "avisos": [f"{dias} días/sem a {duracion} min no está en la tabla — calcular a mano."],
+        }
+    precio, descuento = encontrado
+    return {
+        "tipo": "clase_grupo", "cuota": float(precio), "descuento_pct": descuento,
+        "dias_semana": dias, "duracion_min": duracion, "avisos": [],
+    }

@@ -285,15 +285,21 @@ class AlumnoViewSet(ContactableViaPagadorMixin, ModelViewSet):
         deliberately never included here — they have their own gated/separate endpoints."""
         from modules.pagos.models import Pago
         from modules.pagos.serializers import PagoSerializer
+        from modules.tarifas.models import CargoExtra
+        from modules.tarifas.serializers import CargoExtraSerializer
+        from modules.tarifas.pricing import calcular_cuota_alumno
 
         alumno = self.get_object()
         pagos = Pago.objects.filter(alumno=alumno).select_related("pagador", "grupo", "emisor", "tarifa")
         fechas = alumno.fechas_importantes.all()
         notas = alumno.notas_registro.select_related("autor").all()
+        cargos_extra = alumno.cargos_extra.all()
         return Response({
             "pagos": PagoSerializer(pagos, many=True, context={"request": request}).data,
             "fechas_importantes": FechaImportanteSerializer(fechas, many=True, context={"request": request}).data,
             "notas": NotaAlumnoSerializer(notas, many=True, context={"request": request}).data,
+            "cuota": calcular_cuota_alumno(alumno),
+            "cargos_extra": CargoExtraSerializer(cargos_extra, many=True, context={"request": request}).data,
         })
 
     @action(detail=True, methods=["post"], url_path="foto", parser_classes=[MultiPartParser])

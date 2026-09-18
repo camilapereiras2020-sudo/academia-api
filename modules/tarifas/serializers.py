@@ -1,5 +1,7 @@
 from rest_framework import serializers
-from .models import Tarifa
+from modules.core.mixins import TenantScopedFKMixin
+from modules.alumnos.models import Alumno
+from .models import Tarifa, CargoExtra
 
 
 class TarifaSerializer(serializers.ModelSerializer):
@@ -13,4 +15,13 @@ class TarifaSerializer(serializers.ModelSerializer):
             "id", "nombre", "nombre_display", "tipo_cobro", "tipo_cobro_display",
             "marca", "marca_display", "precio", "horas_semanales", "created_at",
         ]
+        read_only_fields = ["id", "created_at"]
+
+
+class CargoExtraSerializer(TenantScopedFKMixin, serializers.ModelSerializer):
+    tenant_scoped_fields = {"alumno": Alumno}
+
+    class Meta:
+        model = CargoExtra
+        fields = ["id", "alumno", "concepto", "monto", "fecha", "created_at"]
         read_only_fields = ["id", "created_at"]
