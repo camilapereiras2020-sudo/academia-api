@@ -22,14 +22,13 @@ CURSO_CHOICES = [
     ("fp", "Formación Profesional"), ("adulto", "Adulto"), ("otro", "Otro"),
 ]
 
-# Modalidad del alumno puntual (cuánto y cómo se le cobra) — distinto de
-# Tarifa.NOMBRE_CHOICES (clase_grupo/bono_familia/...), que sigue
-# determinando qué tabla de precios aplica. HORA/HORA_Y_MEDIA se calculan
-# solas vía modules.tarifas.pricing; las privadas no tienen fórmula y se
-# cargan a mano (ver Alumno.cuota_manual).
+# Marca si el alumno es de clase privada (sin fórmula, precio a mano — ver
+# Alumno.cuota_manual). En blanco = clase grupo: días/semana y duración se
+# calculan solos del horario asignado (modules.tarifas.pricing), así que no
+# hace falta (ni tiene sentido) elegirlos acá — no confundir con
+# Tarifa.NOMBRE_CHOICES (clase_grupo/bono_familia/...), que determina qué
+# tabla de precios aplica.
 CODIGO_CLASE_CHOICES = [
-    ("HORA", "Clase grupo (1h/semana)"),
-    ("HORA_Y_MEDIA", "Clase grupo (1h30/semana)"),
     ("PRIVADA", "Clase privada"),
     ("PRIVADA_PROFESIONAL", "Clase privada profesional/adultos"),
 ]
