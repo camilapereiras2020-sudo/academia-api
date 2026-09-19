@@ -102,19 +102,23 @@ def _redondear_5(valor):
 
 
 def cuota_bono_familia_prorrateada(alumnos_hermanos):
-    """Regla confirmada 2026-09-19: se suman los precios individuales de
-    Clase Grupo de cada hermano según su propio tramo de días/semana, se
-    aplica el 5% de descuento familiar sobre la suma, se redondea a los 5€
-    más cercanos, y ese total se reparte en PARTES IGUALES entre los
-    hermanos — sin importar que alguno vaya a más horas/semana o con otra
-    profesora (ver claude/cuota-mensual-y-clase-refuerzo-2026-09-18.md §3.1).
+    """Regla confirmada 2026-09-19 (corregida): se suman los precios
+    individuales de Clase Grupo de cada hermano según su propio tramo de
+    días/semana, se aplica el 5% de descuento familiar sobre la suma, se
+    redondea a los 5€ más cercanos, y ese total se reparte entre los
+    hermanos EN PROPORCIÓN a su precio individual dentro de la suma
+    (cuota_hermano = total_redondeado * precio_individual / suma) — no en
+    partes iguales, aunque ambos paguen el mismo Bono Familia total (ver
+    claude/cuota-mensual-y-clase-refuerzo-2026-09-18.md §3.1). El céntimo
+    de redondeo sobrante se ajusta en el último hermano para que la suma de
+    las cuotas cierre exacto en el total.
 
     Returns (info, avisos). info is None if any hermano's profile is
     missing/ambiguous or off-table — the caller should fall back to
     "cuota manual" in that case; avisos explains why."""
     perfiles = [(a, perfil_semanal_alumno(a)) for a in alumnos_hermanos]
     avisos = []
-    suma = Decimal("0")
+    precios_individuales = {}
     for alumno, (dias, duracion, aviso) in perfiles:
         if aviso or duracion is None:
             avisos.append(f"{alumno.nombre}: {aviso or 'sin horario asignado'}")
@@ -124,15 +128,26 @@ def cuota_bono_familia_prorrateada(alumnos_hermanos):
             avisos.append(f"{alumno.nombre}: {dias} días/sem a {duracion} min no está en la tabla.")
             continue
         precio, _ = encontrado
-        suma += Decimal(str(precio))
+        precios_individuales[alumno] = Decimal(str(precio))
 
     if avisos:
         return None, avisos
 
+    suma = sum(precios_individuales.values())
     total = _redondear_5(suma * Decimal("0.95"))
+
+    items = list(precios_individuales.items())
+    cuotas_por_hermano = {}
+    restante = total
+    for alumno, precio in items[:-1]:
+        cuota = (total * precio / suma).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        cuotas_por_hermano[alumno] = cuota
+        restante -= cuota
+    ultimo_alumno, _ = items[-1]
+    cuotas_por_hermano[ultimo_alumno] = restante.quantize(Decimal("0.01"))
+
     n_hermanos = len(alumnos_hermanos)
-    cuota_por_hermano = (total / n_hermanos).quantize(Decimal("0.01"))
-    return {"cuota_por_hermano": cuota_por_hermano, "total": total, "n_hermanos": n_hermanos}, avisos
+    return {"cuotas_por_hermano": cuotas_por_hermano, "total": total, "n_hermanos": n_hermanos}, avisos
 
 
 def calcular_cuota_alumno(alumno):
@@ -164,8 +179,9 @@ def calcular_cuota_alumno(alumno):
     if len(hermanos) in (2, 3, 4):
         info, avisos = cuota_bono_familia_prorrateada(hermanos)
         if info:
+            cuota_alumno = info["cuotas_por_hermano"][alumno]
             return {
-                "tipo": "bono_familia", "cuota": float(info["cuota_por_hermano"]),
+                "tipo": "bono_familia", "cuota": float(cuota_alumno),
                 "total_bono": float(info["total"]), "n_hermanos": info["n_hermanos"],
                 "dias_semana": dias, "duracion_min": duracion, "avisos": avisos,
             }
