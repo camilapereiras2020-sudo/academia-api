@@ -22,6 +22,11 @@ class PagoSerializer(TenantScopedFKMixin, serializers.ModelSerializer):
     emisor_nombre  = serializers.CharField(source="emisor.nombre",  read_only=True, default=None)
     tarifa_nombre  = serializers.CharField(source="tarifa.get_nombre_display", read_only=True, default=None)
     marca_display  = serializers.CharField(source="get_marca_display", read_only=True)
+    # True when this pago's most recent invoice/recibo was voided and nothing
+    # newer has replaced it yet — a "pagado" pago in that state was still
+    # money received, but its paperwork is currently invalid, so consumers
+    # that total up "income" (Dashboard) should exclude it until re-issued.
+    documento_anulado = serializers.SerializerMethodField()
 
     class Meta:
         model  = Pago
@@ -33,11 +38,16 @@ class PagoSerializer(TenantScopedFKMixin, serializers.ModelSerializer):
             "metodo", "estado", "fecha", "horas_trabajadas", "notas",
             "num_doc", "serie_id", "iban", "stripe_payment_intent", "created_at",
             "estado_carga", "numero_factura_reservado", "concepto_original", "concepto_libre",
+            "documento_anulado",
         ]
         read_only_fields = [
             "id", "created_at", "num_doc", "serie_id", "emisor", "emisor_nombre", "tarifa_nombre",
-            "estado_carga", "numero_factura_reservado", "concepto_original",
+            "estado_carga", "numero_factura_reservado", "concepto_original", "documento_anulado",
         ]
+
+    def get_documento_anulado(self, obj):
+        documentos = list(obj.documentos.all())
+        return bool(documentos and documentos[0].estado == "anulada")
 
     def validate(self, attrs):
         instance = self.instance
