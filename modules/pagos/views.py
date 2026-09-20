@@ -121,7 +121,7 @@ class PagoViewSet(ModelViewSet):
     def get_queryset(self):
         qs = Pago.objects.filter(
             academia=self.request.user.tenant
-        ).select_related("pagador", "alumno", "grupo", "emisor")
+        ).select_related("pagador", "alumno", "grupo", "emisor").prefetch_related("documentos")
         scope = marca_scope_for(self.request.user)
         if scope:
             qs = qs.filter(marca=scope)
