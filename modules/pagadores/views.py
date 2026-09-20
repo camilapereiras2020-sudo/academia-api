@@ -73,9 +73,9 @@ class PagadorCalculadoraView(APIView):
             n_hermanos = len(perfiles)
             # Bono Familia se activa para 2-4 hermanos con perfil válido,
             # sin exigir que coincidan en días/semana o duración — se
-            # reparte en partes iguales aunque vayan a distinto tramo o con
-            # otra profesora (regla confirmada 2026-09-19, ver
-            # tarifas.pricing.cuota_bono_familia_prorrateada).
+            # reparte EN PROPORCIÓN al tramo individual de cada hermano
+            # dentro de la suma, no en partes iguales (regla corregida
+            # 2026-09-19, ver tarifas.pricing.cuota_bono_familia_prorrateada).
             es_bono_familia = n_hermanos in (2, 3, 4) and all(p["duracion"] is not None for p in perfiles)
 
             if es_bono_familia:
@@ -88,10 +88,12 @@ class PagadorCalculadoraView(APIView):
                         "alumnos": [p["alumno"].nombre for p in perfiles],
                         "n_hermanos": n_hermanos,
                         "perfiles": [
-                            {"alumno": p["alumno"].nombre, "dias_semana": p["dias"], "duracion_min": p["duracion"]}
+                            {
+                                "alumno": p["alumno"].nombre, "dias_semana": p["dias"], "duracion_min": p["duracion"],
+                                "cuota": float(info["cuotas_por_hermano"][p["alumno"]]),
+                            }
                             for p in perfiles
                         ],
-                        "cuota_por_hermano": float(info["cuota_por_hermano"]),
                         "precio": float(info["total"]),
                     })
             else:
