@@ -46,7 +46,11 @@ class PagoSerializer(TenantScopedFKMixin, serializers.ModelSerializer):
         ]
 
     def get_documento_anulado(self, obj):
-        documentos = list(obj.documentos.all())
+        # Un pago "secundario" de una factura combinada (Bono Familia entre
+        # hermanos con distinto pagador principal) cuelga de
+        # documentos_combinados (Documento.pagos_adicionales), no de
+        # `documentos` (Documento.pago) — un pago solo tiene uno de los dos.
+        documentos = list(obj.documentos.all()) or list(obj.documentos_combinados.all())
         return bool(documentos and documentos[0].estado == "anulada")
 
     def validate(self, attrs):

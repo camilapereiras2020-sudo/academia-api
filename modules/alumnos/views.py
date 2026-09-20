@@ -290,7 +290,8 @@ class AlumnoViewSet(ContactableViaPagadorMixin, ModelViewSet):
         from modules.tarifas.pricing import calcular_cuota_alumno
 
         alumno = self.get_object()
-        pagos = Pago.objects.filter(alumno=alumno).select_related("pagador", "grupo", "emisor", "tarifa")
+        pagos = Pago.objects.filter(alumno=alumno).select_related("pagador", "grupo", "emisor", "tarifa") \
+            .prefetch_related("documentos", "documentos_combinados")
         fechas = alumno.fechas_importantes.all()
         notas = alumno.notas_registro.select_related("autor").all()
         cargos_extra = alumno.cargos_extra.all()
