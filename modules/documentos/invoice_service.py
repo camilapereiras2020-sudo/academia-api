@@ -746,7 +746,28 @@ def _pagador_display_fields(pagador, alumno):
     """Returns (nombre, nif, telefono, email) to render on the invoice/recibo.
     If there's no Pagador on file but the alumno is an adult who pays for
     themself (Alumno.es_adulto), fall back to the alumno's own contact data
-    instead of leaving the document blank."""
+    instead of leaving the document blank.
+
+    An adult self-payer can also end up *with* a Pagador row linked (e.g. one
+    created before this fallback existed, or from picking themself in the
+    Pagador combobox) that only has a short/roster name and no NIF/tel/email
+    on file — the real contact data lives on the alumno's own "Datos
+    generales" instead. In that case (alumno.pagador IS this same pagador),
+    the alumno's own record is the one staff actually keeps up to date, so
+    it takes priority; the linked Pagador row's fields are only a fallback
+    for whichever ones the alumno record itself left blank."""
+    es_autopagador = (
+        pagador is not None and alumno is not None
+        and getattr(alumno, "es_adulto", False)
+        and getattr(alumno, "pagador_id", None) == pagador.id
+    )
+    if es_autopagador:
+        return (
+            alumno.nombre or pagador.nombre,
+            getattr(alumno, "dni", "") or getattr(pagador, "nif", "") or "",
+            getattr(alumno, "telefono", "") or getattr(pagador, "telefono", "") or "",
+            getattr(alumno, "email", "") or getattr(pagador, "email", "") or "",
+        )
     if pagador is not None:
         return (
             pagador.nombre,
