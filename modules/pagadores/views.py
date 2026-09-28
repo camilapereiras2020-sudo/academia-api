@@ -7,7 +7,7 @@ from rest_framework.viewsets import ModelViewSet
 from modules.authentication.rbac import NotReception, marca_scope_for
 from modules.core.mixins import ContactableViaPagadorMixin
 from modules.tarifas.pricing import (
-    cuota_bono_familia_prorrateada, perfil_semanal_alumno, precio_clase_grupo,
+    cuota_bono_familia, perfil_semanal_alumno, precio_clase_grupo,
 )
 from .models import Pagador
 from .serializers import PagadorSerializer
@@ -71,16 +71,14 @@ class PagadorCalculadoraView(APIView):
             total = Decimal("0")
 
             n_hermanos = len(perfiles)
-            # Bono Familia se activa para 2-4 hermanos con perfil válido,
-            # sin exigir que coincidan en días/semana o duración — se
-            # reparte EN PROPORCIÓN al tramo individual de cada hermano
-            # dentro de la suma, no en partes iguales (regla corregida
-            # 2026-09-19, ver tarifas.pricing.cuota_bono_familia_prorrateada).
-            es_bono_familia = n_hermanos in (2, 3, 4) and all(p["duracion"] is not None for p in perfiles)
-
-            if es_bono_familia:
-                info, avisos_bono = cuota_bono_familia_prorrateada([p["alumno"] for p in perfiles])
-                avisos.extend(avisos_bono)
+            # Bono Familia con la tabla fija de la tarifa: solo 2 hermanos
+            # con los mismos días y duración (ver tarifas.pricing.cuota_bono_familia).
+            # Cualquier otro caso de hermanos no está en la tarifa: se calcula a
+            # mano y aquí solo sale el aviso, sin una estimación que el cliente
+            # no haya visto en el PDF.
+            if n_hermanos >= 2:
+                info, avisos_bono = cuota_bono_familia([p["alumno"] for p in perfiles])
+                avisos.extend(a for a in avisos_bono if a not in avisos)
                 if info:
                     total += info["total"]
                     items.append({
@@ -100,20 +98,19 @@ class PagadorCalculadoraView(APIView):
                 for p in perfiles:
                     if p["duracion"] is None:
                         continue  # ya está en avisos
-                    encontrado = precio_clase_grupo(p["dias"], p["duracion"])
-                    if not encontrado:
+                    precio = precio_clase_grupo(p["dias"], p["duracion"])
+                    if precio is None:
                         avisos.append(
                             f"{p['alumno'].nombre}: {p['dias']} días/sem a {p['duracion']} min "
-                            "no está en la tabla — calcular a mano."
+                            "no está en la tarifa — calcular a mano."
                         )
                         continue
-                    precio, descuento = encontrado
-                    total += Decimal(str(precio))
+                    total += Decimal(precio)
                     items.append({
                         "tipo": "clase_grupo",
                         "alumnos": [p["alumno"].nombre],
                         "dias_semana": p["dias"], "duracion_min": p["duracion"],
-                        "precio": precio, "descuento_pct": descuento,
+                        "precio": precio,
                     })
 
             resultado.append({
