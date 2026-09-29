@@ -1,61 +1,49 @@
-"""Fixed 2026/2027 Rangers Academy group pricing, as agreed with Cami
-2026-09 (same numbers as "Guía interna de precios — Curso 2026/2027").
+"""Tarifa oficial Rangers Academy 2026/2027 — la misma que reciben las familias.
 
-The 60-min column matches the official pricing poster Cande already sent to
-families, not a raw application of the 0/3/5/7/9% (Grupo) / flat 5%
-(Familia) formula — Cande rounded those results to the nearest 5€. The
-90-min column happens to need no rounding (its formula results already land
-on multiples of 5€), so it's unchanged either way.
+Fuente de verdad: los PDF de precios que se entregan a los clientes
+("Tarifa-Rangers-26-27.pdf" para 90 min) y la tarifa de 1 hora acordada con
+dirección. Tablas fijas, sin fórmula: si cambia un precio, cambia primero en
+el PDF y después aquí, en frontend/src/features/tarifas/pages/PreciosPage.tsx
+y en frontend/src/features/pagadores/pages/CalculadoraPage.tsx. Los tests de
+modules/tarifas/tests.py fijan estas cifras.
 
 Deliberately NOT modeled through modules.tarifas.Tarifa — that model is a
-flat per-tariff price lookup (nombre + horas_semanales up to 3) and doesn't
-capture a per-día-de-la-semana tier (1-5) crossed with session duration
-(1h / 90min), which is the actual shape of these rates. Rather than reshape
-Tarifa (used elsewhere, migration risk) this lives as an explicit table.
-Update this file *and* the Word guide together if prices change for a new
-course year — there's no other source of truth to keep in sync with.
+flat per-tariff price lookup and doesn't capture a per-día-de-la-semana tier
+crossed with session duration (1h / 90min), which is the actual shape of
+these rates.
 """
 from collections import Counter
 from decimal import Decimal, ROUND_HALF_UP
 
-MATRICULA = 20  # one-off enrollment fee, per student, aparte de la cuota
-PRECIO_CLASE_PRIVADA_HORA = 35  # adult 1:1 professional classes, per hour
+MATRICULA = 20  # pago único por alumno, aparte de la cuota; exenta de IVA
+PRECIO_CLASE_PRIVADA_HORA = 30
+PRECIO_CLASE_PRIVADA_PROFESIONAL_HORA = 35  # privada profesional o especialización
 
-# {duracion_min: {dias_semana: (precio_mes, descuento_pct)}}
+# Clases Grupo, precio por alumno y mes. {duracion_min: {dias_semana: precio}}
+# 90 min solo existe de 1 a 3 días/semana. No hay clases de 2 horas.
 CLASES_GRUPO = {
-    60: {1: (50, 0), 2: (95, 3), 3: (145, 5), 4: (185, 7), 5: (230, 9)},
-    90: {1: (72, 0), 2: (140, 3), 3: (205, 5), 4: (268, 7), 5: (328, 9)},
+    60: {1: 50, 2: 95, 3: 145, 4: 185, 5: 230},
+    90: {1: 75, 2: 137, 3: 200},
 }
 
-# Bono Familia = Clases Grupo x n_hermanos con un 5% de descuento fijo de
-# familia, igual en todos los tramos. {n_hermanos: {duracion_min: {dias_semana: (precio_mes, descuento_pct)}}}
+# Bono Familia: precio conjunto por mes para 2 hermanos que van los mismos
+# días y la misma duración. {duracion_min: {dias_semana: precio}}
 BONO_FAMILIA = {
-    2: {
-        60: {1: (95, 5), 2: (180, 5), 3: (275, 5), 4: (350, 5), 5: (435, 5)},
-        90: {1: (137, 5), 2: (266, 5), 3: (390, 5), 4: (509, 5), 5: (623, 5)},
-    },
-    3: {
-        60: {1: (145, 5), 2: (270, 5), 3: (415, 5), 4: (525, 5), 5: (655, 5)},
-        90: {1: (205, 5), 2: (399, 5), 3: (584, 5), 4: (764, 5), 5: (935, 5)},
-    },
-    4: {
-        60: {1: (190, 5), 2: (360, 5), 3: (550, 5), 4: (705, 5), 5: (875, 5)},
-        90: {1: (274, 5), 2: (532, 5), 3: (779, 5), 4: (1018, 5), 5: (1246, 5)},
-    },
+    60: {1: 95, 2: 180, 3: 275, 4: 350, 5: 435},
+    90: {1: 130, 2: 260, 3: 375},
 }
+BONO_FAMILIA_HERMANOS = 2
 
 
 def precio_clase_grupo(dias_semana, duracion_min):
-    """(precio, descuento_pct) or None if that combination isn't in the
-    finalized table (e.g. 0 or >5 días/semana, or a duration other than
-    60/90 min)."""
-    tabla = CLASES_GRUPO.get(duracion_min)
-    return tabla.get(dias_semana) if tabla else None
+    """Precio mensual de la tarifa, o None si esa combinación no está en la
+    tarifa (0 o >5 días, 90 min con más de 3 días, otra duración)."""
+    return CLASES_GRUPO.get(duracion_min, {}).get(dias_semana)
 
 
-def precio_bono_familia(dias_semana, duracion_min, n_hermanos=2):
-    tabla = BONO_FAMILIA.get(n_hermanos, {}).get(duracion_min)
-    return tabla.get(dias_semana) if tabla else None
+def precio_bono_familia(dias_semana, duracion_min):
+    """Precio mensual conjunto del Bono Familia, o None si no está en la tarifa."""
+    return BONO_FAMILIA.get(duracion_min, {}).get(dias_semana)
 
 
 def perfil_semanal_alumno(alumno):
@@ -94,60 +82,40 @@ def perfil_semanal_alumno(alumno):
     return dias_semana, duracion_predominante, aviso
 
 
-def _redondear_5(valor):
-    """Redondea a los 5€ más cercanos — misma convención que las tablas de
-    BONO_FAMILIA (ya redondeadas a mano por Cande)."""
-    valor = Decimal(str(valor))
-    return (valor / 5).quantize(Decimal("1"), rounding=ROUND_HALF_UP) * 5
+def cuota_bono_familia(alumnos_hermanos):
+    """Bono Familia con la tabla fija de la tarifa, sin fórmula.
 
+    Solo aplica a exactamente 2 hermanos que van los mismos días/semana y la
+    misma duración: el precio sale de BONO_FAMILIA y se reparte a partes
+    iguales (el céntimo sobrante, si lo hay, va al último para que la suma
+    cierre exacta en el precio de la tarifa). Cualquier otro caso no está en
+    la tarifa y se calcula a mano.
 
-def cuota_bono_familia_prorrateada(alumnos_hermanos):
-    """Regla confirmada 2026-09-19 (corregida): se suman los precios
-    individuales de Clase Grupo de cada hermano según su propio tramo de
-    días/semana, se aplica el 5% de descuento familiar sobre la suma, se
-    redondea a los 5€ más cercanos, y ese total se reparte entre los
-    hermanos EN PROPORCIÓN a su precio individual dentro de la suma
-    (cuota_hermano = total_redondeado * precio_individual / suma) — no en
-    partes iguales, aunque ambos paguen el mismo Bono Familia total (ver
-    claude/cuota-mensual-y-clase-refuerzo-2026-09-18.md §3.1). El céntimo
-    de redondeo sobrante se ajusta en el último hermano para que la suma de
-    las cuotas cierre exacto en el total.
-
-    Returns (info, avisos). info is None if any hermano's profile is
-    missing/ambiguous or off-table — the caller should fall back to
-    "cuota manual" in that case; avisos explains why."""
+    Returns (info, avisos). info is None when the tarifa doesn't cover the
+    case — the caller falls back to "precio manual"; avisos explains why."""
     perfiles = [(a, perfil_semanal_alumno(a)) for a in alumnos_hermanos]
-    avisos = []
-    precios_individuales = {}
-    for alumno, (dias, duracion, aviso) in perfiles:
-        if aviso or duracion is None:
-            avisos.append(f"{alumno.nombre}: {aviso or 'sin horario asignado'}")
-            continue
-        encontrado = precio_clase_grupo(dias, duracion)
-        if not encontrado:
-            avisos.append(f"{alumno.nombre}: {dias} días/sem a {duracion} min no está en la tabla.")
-            continue
-        precio, _ = encontrado
-        precios_individuales[alumno] = Decimal(str(precio))
-
+    avisos = [f"{a.nombre}: {aviso}" for a, (_, _, aviso) in perfiles if aviso]
     if avisos:
         return None, avisos
+    if len(perfiles) != BONO_FAMILIA_HERMANOS:
+        return None, [f"Bono Familia de {len(perfiles)} hermanos no está en la tarifa — calcular a mano."]
 
-    suma = sum(precios_individuales.values())
-    total = _redondear_5(suma * Decimal("0.95"))
+    combinaciones = {(dias, duracion) for _, (dias, duracion, _) in perfiles}
+    if len(combinaciones) != 1:
+        return None, ["Bono Familia: los hermanos van distintos días o duración — calcular a mano."]
+    dias, duracion = combinaciones.pop()
+    precio = precio_bono_familia(dias, duracion)
+    if precio is None:
+        return None, [f"Bono Familia: {dias} días/sem a {duracion} min no está en la tarifa — calcular a mano."]
 
-    items = list(precios_individuales.items())
-    cuotas_por_hermano = {}
-    restante = total
-    for alumno, precio in items[:-1]:
-        cuota = (total * precio / suma).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-        cuotas_por_hermano[alumno] = cuota
-        restante -= cuota
-    ultimo_alumno, _ = items[-1]
-    cuotas_por_hermano[ultimo_alumno] = restante.quantize(Decimal("0.01"))
-
-    n_hermanos = len(alumnos_hermanos)
-    return {"cuotas_por_hermano": cuotas_por_hermano, "total": total, "n_hermanos": n_hermanos}, avisos
+    total = Decimal(precio)
+    mitad = (total / BONO_FAMILIA_HERMANOS).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    (primero, _), (segundo, _) = perfiles
+    cuotas_por_hermano = {primero: mitad, segundo: total - mitad}
+    return {
+        "cuotas_por_hermano": cuotas_por_hermano, "total": total,
+        "n_hermanos": BONO_FAMILIA_HERMANOS, "dias_semana": dias, "duracion_min": duracion,
+    }, []
 
 
 def calcular_cuota_alumno(alumno):
@@ -156,13 +124,14 @@ def calcular_cuota_alumno(alumno):
     aviso explicando por qué (para que el frontend muestre "precio manual").
 
     Orden: precio manual cargado > clase privada (sin fórmula) > Bono
-    Familia prorrateado (2-4 hermanos activos no-adultos con el mismo
-    pagador) > Clase Grupo individual > sin tabla."""
+    Familia (hermanos activos no-adultos con el mismo pagador; solo 2 con el
+    mismo perfil están en la tarifa) > Clase Grupo individual > sin tabla."""
     if alumno.cuota_manual is not None:
         return {"tipo": "manual", "cuota": float(alumno.cuota_manual), "avisos": []}
 
     if alumno.codigo_clase in ("PRIVADA", "PRIVADA_PROFESIONAL"):
-        tarifa_hora = PRECIO_CLASE_PRIVADA_HORA if alumno.codigo_clase == "PRIVADA_PROFESIONAL" else 30
+        tarifa_hora = (PRECIO_CLASE_PRIVADA_PROFESIONAL_HORA if alumno.codigo_clase == "PRIVADA_PROFESIONAL"
+                       else PRECIO_CLASE_PRIVADA_HORA)
         return {
             "tipo": "privada_manual", "cuota": None, "tarifa_hora_referencia": tarifa_hora,
             "avisos": ["Clase privada: tarifa por hora, no se calcula sola — cargar precio manual."],
@@ -176,8 +145,8 @@ def calcular_cuota_alumno(alumno):
     if alumno.pagador_id:
         hermanos = [a for a in alumno.pagador.alumnos.all() if a.activo and not a.es_adulto]
 
-    if len(hermanos) in (2, 3, 4):
-        info, avisos = cuota_bono_familia_prorrateada(hermanos)
+    if len(hermanos) >= 2:
+        info, avisos = cuota_bono_familia(hermanos)
         if info:
             cuota_alumno = info["cuotas_por_hermano"][alumno]
             return {
@@ -190,14 +159,13 @@ def calcular_cuota_alumno(alumno):
             "dias_semana": dias, "duracion_min": duracion, "avisos": avisos,
         }
 
-    encontrado = precio_clase_grupo(dias, duracion)
-    if not encontrado:
+    precio = precio_clase_grupo(dias, duracion)
+    if precio is None:
         return {
             "tipo": "sin_tabla", "cuota": None, "dias_semana": dias, "duracion_min": duracion,
-            "avisos": [f"{dias} días/sem a {duracion} min no está en la tabla — calcular a mano."],
+            "avisos": [f"{dias} días/sem a {duracion} min no está en la tarifa — calcular a mano."],
         }
-    precio, descuento = encontrado
     return {
-        "tipo": "clase_grupo", "cuota": float(precio), "descuento_pct": descuento,
+        "tipo": "clase_grupo", "cuota": float(precio),
         "dias_semana": dias, "duracion_min": duracion, "avisos": [],
     }
