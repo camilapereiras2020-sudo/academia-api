@@ -124,11 +124,26 @@ class AlumnoViewSet(ContactableViaPagadorMixin, ModelViewSet):
         if pagador:
             qs = qs.filter(pagador_id=pagador)
         if search:
-            from django.db.models import Q
-            qs = qs.filter(
+            from django.db.models import F, Q, Value
+            from django.db.models.functions import Replace
+            search = search.strip()
+            filtro = (
                 Q(nombre__icontains=search) |
-                Q(pagador__nombre__icontains=search)
+                Q(pagador__nombre__icontains=search) |
+                Q(dni__icontains=search) |
+                Q(pagador__nif__icontains=search) |
+                Q(email__icontains=search) |
+                Q(pagador__email__icontains=search)
             )
+            # Teléfono: se compara sin espacios en ninguno de los dos lados.
+            digitos = search.replace(" ", "")
+            if digitos:
+                qs = qs.annotate(
+                    _tel=Replace(F("telefono"), Value(" "), Value("")),
+                    _tel_pagador=Replace(F("pagador__telefono"), Value(" "), Value("")),
+                )
+                filtro |= Q(_tel__icontains=digitos) | Q(_tel_pagador__icontains=digitos)
+            qs = qs.filter(filtro)
         if grupo:
             qs = qs.filter(grupos__id=grupo).distinct()
         if empresa:
