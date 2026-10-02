@@ -322,13 +322,11 @@ class PagoViewSet(ModelViewSet):
         was_pending = serializer.instance.estado_carga == "pendiente_completar"
         pago = serializer.save()
 
-        # An adult alumno who pays for themself (Alumno.es_adulto) may have no
-        # Pagador on file — generate_invoice_for_pago falls back to the
-        # alumno's own contact data in that case, so don't gate completion on
-        # pagador_id alone.
-        if was_pending and pago.alumno_id and (
-            pago.pagador_id or getattr(pago.alumno, "es_adulto", False)
-        ):
+        # Basta con el alumno: un adulto que paga él mismo, o un alumno sin
+        # datos del pagador (pagador "Otros", pago en mano), quedan sin
+        # Pagador — el documento sale con los datos del alumno (ver
+        # invoice_service._pagador_display_fields).
+        if was_pending and pago.alumno_id:
             if not pago.emisor_id:
                 pago.emisor = _resolve_emisor(self.request.user.tenant, self.request.data.get("emisor"), pago.marca)
             pago.estado_carga = "completo"
