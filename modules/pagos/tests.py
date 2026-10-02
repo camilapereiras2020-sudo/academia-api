@@ -240,6 +240,19 @@ class DraftCompletionFlowTests(TestCase):
         self.assertEqual(self.draft.num_doc, "")
         self.assertFalse(self.draft.documentos.exists())
 
+    def test_patch_completes_draft_without_pagador_otros(self):
+        """Pagador "Otros" (sin datos, pago en mano): el borrador se completa
+        solo con el alumno, aunque sea menor y no tenga pagador."""
+        resp = self.client.patch(
+            f"/api/v1/pagos/{self.draft.id}/",
+            {"alumno": self.alumno.id, "pagador": None, "notas": "Pagador: Otros (sin datos) — alumno antiguo"},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.draft.refresh_from_db()
+        self.assertEqual(self.draft.estado_carga, "completo")
+        self.assertIsNone(self.draft.pagador_id)
+
     @patch("modules.documentos.sheets_log.log_emision")
     @patch("modules.pagos.views._send_payment_email")
     @patch("modules.documentos.invoice_service.upload_to_drive")
