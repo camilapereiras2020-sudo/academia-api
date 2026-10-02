@@ -782,6 +782,10 @@ def _pagador_display_fields(pagador, alumno):
             getattr(alumno, "telefono", "") or "",
             getattr(alumno, "email", "") or "",
         )
+    if alumno is not None:
+        # Menor sin pagador registrado (pago en mano, sin datos): al menos
+        # el nombre del alumno, para que el documento no salga en blanco.
+        return (alumno.nombre, "", "", "")
     return ("", "", "", "")
 
 
@@ -794,12 +798,10 @@ def _prepare_invoice_pdf(pago, tipo="factura"):
     callers should store *this* on the Documento, not their own guess (the
     `tipo` param above is legacy and not used for numbering).
     """
-    alumno_adulto_sin_pagador = (
-        not pago.pagador_id and pago.alumno_id and getattr(pago.alumno, "es_adulto", False)
-    )
-    if pago.estado_carga == "pendiente_completar" or not pago.alumno_id or (
-        not pago.pagador_id and not alumno_adulto_sin_pagador
-    ):
+    # Sin pagador también vale: alumnos de antes sin datos del pagador que
+    # pagan en mano ("Otros" en el frontend). El documento sale a nombre del
+    # alumno — ver _pagador_display_fields.
+    if pago.estado_carga == "pendiente_completar" or not pago.alumno_id:
         raise ValueError(
             f"Pago {pago.id} está incompleto (estado_carga={pago.estado_carga!r}, "
             f"alumno={pago.alumno_id}, pagador={pago.pagador_id}) — "
@@ -887,12 +889,10 @@ def generate_preview_pdf_bytes(pago) -> bytes:
     no DB writes at all, so it's safe to call as many times as staff wants
     while they're still reviewing/editing the pago.
     """
-    alumno_adulto_sin_pagador = (
-        not pago.pagador_id and pago.alumno_id and getattr(pago.alumno, "es_adulto", False)
-    )
-    if pago.estado_carga == "pendiente_completar" or not pago.alumno_id or (
-        not pago.pagador_id and not alumno_adulto_sin_pagador
-    ):
+    # Sin pagador también vale: alumnos de antes sin datos del pagador que
+    # pagan en mano ("Otros" en el frontend). El documento sale a nombre del
+    # alumno — ver _pagador_display_fields.
+    if pago.estado_carga == "pendiente_completar" or not pago.alumno_id:
         raise ValueError(f"Pago {pago.id} está incompleto — complétalo antes de previsualizar.")
 
     emisor = pago.emisor
