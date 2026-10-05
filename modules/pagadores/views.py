@@ -1,14 +1,14 @@
 from decimal import Decimal
 
+from django.utils import timezone
 from rest_framework import permissions
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.viewsets import ModelViewSet
 from modules.authentication.rbac import NotReception, marca_scope_for
 from modules.core.mixins import ContactableViaPagadorMixin
-from modules.tarifas.pricing import (
-    cuota_bono_familia, cuota_ranger_express, perfil_semanal_alumno, precio_clase_grupo,
-)
+from modules.pagos.models import Pago
+from modules.tarifas.pricing import calcular_cuota_alumno
 from .models import Pagador
 from .serializers import PagadorSerializer
 
@@ -33,11 +33,18 @@ class PagadorViewSet(ContactableViaPagadorMixin, ModelViewSet):
 
 
 class PagadorCalculadoraView(APIView):
-    """"Cuánto le toca pagar" por pagador, según la guía de precios
-    2026/2027. Deliberadamente separada de PagadorViewSet (que bloquea a
-    recepción por completo y expone NIF/IBAN/notas): esta vista solo
-    devuelve el nombre del pagador y la cuota calculada, así que la puede
-    usar cualquier rol, recepción incluida.
+    """"Quién tiene que pagar cuánto, por qué y a quién, y si ya pagó y
+    tiene factura/recibo" — por pagador, para el período indicado
+    (?periodo=YYYY-MM, por defecto el mes actual). Deliberadamente separada
+    de PagadorViewSet (que bloquea a recepción por completo y expone
+    NIF/IBAN/notas): esta vista solo devuelve el nombre del pagador y lo
+    que debe, así que la puede usar cualquier rol, recepción incluida.
+
+    La cuota de cada hijo se calcula con tarifas.pricing.calcular_cuota_alumno
+    — la misma función que usa la ficha del alumno, así que respeta la
+    cuota manual cargada ahí sin reimplementar nada. "Por qué" es el
+    desglose por hijo (tipo de cuota); el estado de pago y de
+    factura/recibo se leen de los Pago de ese período.
 
     No cubre clases particulares para adultos (35€/hora, es_adulto=True) ni
     alumnos sin horario asignado en el sistema — esos casos salen listados
@@ -49,6 +56,7 @@ class PagadorCalculadoraView(APIView):
     def get(self, request):
         tenant = request.user.tenant
         scope = marca_scope_for(request.user)
+        periodo = (request.query_params.get("periodo") or "").strip() or timezone.now().strftime("%Y-%m")
 
         pagadores_qs = Pagador.objects.filter(academia=tenant).prefetch_related(
             "alumnos__inscripciones__grupo"
@@ -62,69 +70,48 @@ class PagadorCalculadoraView(APIView):
             if not alumnos:
                 continue
 
-            perfiles = [
-                {"alumno": a, **dict(zip(("dias", "duracion", "aviso"), perfil_semanal_alumno(a)))}
-                for a in alumnos
-            ]
-            avisos = [f"{p['alumno'].nombre}: {p['aviso']}" for p in perfiles if p["aviso"]]
+            avisos = []
             items = []
             total = Decimal("0")
 
-            n_hermanos = len(perfiles)
-            # Bono Familia con la tabla fija de la tarifa: solo 2 hermanos
-            # con los mismos días y duración (ver tarifas.pricing.cuota_bono_familia).
-            # Cualquier otro caso de hermanos no está en la tarifa: se calcula a
-            # mano y aquí solo sale el aviso, sin una estimación que el cliente
-            # no haya visto en el PDF.
-            if n_hermanos >= 2:
-                info, avisos_bono = cuota_bono_familia([p["alumno"] for p in perfiles])
-                avisos.extend(a for a in avisos_bono if a not in avisos)
-                if info:
-                    total += info["total"]
+            for alumno in alumnos:
+                info = calcular_cuota_alumno(alumno)
+                avisos.extend(f"{alumno.nombre}: {a}" for a in info["avisos"])
+                if info["cuota"] is not None:
+                    total += Decimal(str(info["cuota"]))
+                items.append({
+                    "tipo": info["tipo"],
+                    "alumno": alumno.nombre,
+                    "cuota": info["cuota"],
+                })
+                if info["ranger_express"] is not None:
+                    total += Decimal(str(info["ranger_express"]))
                     items.append({
-                        "tipo": "bono_familia",
-                        "alumnos": [p["alumno"].nombre for p in perfiles],
-                        "n_hermanos": n_hermanos,
-                        "perfiles": [
-                            {
-                                "alumno": p["alumno"].nombre, "dias_semana": p["dias"], "duracion_min": p["duracion"],
-                                "cuota": float(info["cuotas_por_hermano"][p["alumno"]]),
-                            }
-                            for p in perfiles
-                        ],
-                        "precio": float(info["total"]),
-                    })
-            else:
-                for p in perfiles:
-                    if p["duracion"] is None:
-                        continue  # ya está en avisos
-                    precio = precio_clase_grupo(p["dias"], p["duracion"])
-                    if precio is None:
-                        avisos.append(
-                            f"{p['alumno'].nombre}: {p['dias']} días/sem a {p['duracion']} min "
-                            "no está en la tarifa — calcular a mano."
-                        )
-                        continue
-                    total += Decimal(precio)
-                    items.append({
-                        "tipo": "clase_grupo",
-                        "alumnos": [p["alumno"].nombre],
-                        "dias_semana": p["dias"], "duracion_min": p["duracion"],
-                        "precio": precio,
+                        "tipo": "ranger_express",
+                        "alumno": alumno.nombre,
+                        "cuota": info["ranger_express"],
                     })
 
-            # The Ranger Express: línea fija y separada, 10€ por cada hijo
-            # con el servicio — nunca entra en la suma del 5% de Bono
-            # Familia (eso solo aplica a Clases Grupo), se suma después.
-            alumnos_express = [a for a in alumnos if a.ranger_express]
-            if alumnos_express:
-                total_express = sum(Decimal(str(a.recogida_precio)) for a in alumnos_express)
-                total += total_express
-                items.append({
-                    "tipo": "ranger_express",
-                    "alumnos": [a.nombre for a in alumnos_express],
-                    "precio": float(total_express),
-                })
+            pagos_periodo = list(
+                Pago.objects.filter(academia=tenant, alumno_id__in=[a.id for a in alumnos], periodo=periodo)
+            )
+            if not pagos_periodo:
+                estado_pago = "sin_generar"
+            elif all(p.estado == "pagado" for p in pagos_periodo):
+                estado_pago = "pagado"
+            elif any(p.estado in ("pagado", "parcial") for p in pagos_periodo):
+                estado_pago = "parcial"
+            else:
+                estado_pago = "pendiente"
+
+            def _doc_emitido(p):
+                # Mismo criterio que Pago.documento_anulado: el documento más
+                # reciente (pago.documentos, o pagos_adicionales si es un pago
+                # "secundario" de una factura combinada) es el que manda.
+                docs = list(p.documentos.all()) or list(p.documentos_combinados.all())
+                return bool(docs) and docs[0].estado == "emitida"
+
+            documento_generado = bool(pagos_periodo) and all(_doc_emitido(p) for p in pagos_periodo)
 
             resultado.append({
                 "pagador_id": pagador.id,
@@ -132,6 +119,9 @@ class PagadorCalculadoraView(APIView):
                 "items": items,
                 "cuota_mensual_estimada": float(total),
                 "avisos": avisos,
+                "periodo": periodo,
+                "estado_pago": estado_pago,
+                "documento_generado": documento_generado,
             })
 
         resultado.sort(key=lambda r: r["pagador_nombre"])

@@ -17,9 +17,13 @@ from django.contrib.auth import get_user_model
 from django.test import SimpleTestCase, TestCase
 from rest_framework.test import APIClient
 
+from django.utils import timezone
+
 from modules.alumnos.models import Alumno, Inscripcion
+from modules.documentos.models import Documento
 from modules.grupos.models import Grupo
 from modules.pagadores.models import Pagador
+from modules.pagos.models import Pago
 from modules.tarifas import pricing
 
 User = get_user_model()
@@ -260,4 +264,52 @@ class CalculadoraPagadorTests(TestCase):
         # Clase Grupo (1 día/60min = 50€) + The Ranger Express (10€) = 60€
         self.assertEqual(f["cuota_mensual_estimada"], 60.0)
         self.assertEqual(f["items"][-1]["tipo"], "ranger_express")
-        self.assertEqual(f["items"][-1]["precio"], 10.0)
+        self.assertEqual(f["items"][-1]["cuota"], 10.0)
+
+    def test_estado_pago_sin_generar(self):
+        self.crear("SinPago", [(1, "17:00", "18:00")])
+        f = self.fila("SinPago")
+        periodo_actual = timezone.now().strftime("%Y-%m")
+        self.assertEqual(f["periodo"], periodo_actual)
+        self.assertEqual(f["estado_pago"], "sin_generar")
+        self.assertFalse(f["documento_generado"])
+
+    def test_estado_pago_pagado_sin_documento(self):
+        pagador = self.crear("Pagado", [(1, "17:00", "18:00")])
+        alumno = pagador.alumnos.first()
+        periodo = timezone.now().strftime("%Y-%m")
+        Pago.objects.create(
+            academia=self.user, alumno=alumno, pagador=pagador,
+            periodo=periodo, total=50, metodo="efectivo", estado="pagado",
+        )
+        f = self.fila("Pagado")
+        self.assertEqual(f["estado_pago"], "pagado")
+        self.assertFalse(f["documento_generado"])
+
+    def test_estado_pago_pagado_con_documento_emitido(self):
+        pagador = self.crear("ConFactura", [(1, "17:00", "18:00")])
+        alumno = pagador.alumnos.first()
+        periodo = timezone.now().strftime("%Y-%m")
+        pago = Pago.objects.create(
+            academia=self.user, alumno=alumno, pagador=pagador,
+            periodo=periodo, total=50, metodo="efectivo", estado="pagado",
+        )
+        Documento.objects.create(academia=self.user, pago=pago, tipo="recibo", nombre="Recibo", estado="emitida")
+        f = self.fila("ConFactura")
+        self.assertEqual(f["estado_pago"], "pagado")
+        self.assertTrue(f["documento_generado"])
+
+    def test_estado_pago_parcial_entre_hermanos(self):
+        pagador = self.crear("Parcial", [(1, "17:00", "18:00"), (1, "17:00", "18:00")])
+        alumnos = list(pagador.alumnos.all())
+        periodo = timezone.now().strftime("%Y-%m")
+        Pago.objects.create(
+            academia=self.user, alumno=alumnos[0], pagador=pagador,
+            periodo=periodo, total=47.5, metodo="efectivo", estado="pagado",
+        )
+        Pago.objects.create(
+            academia=self.user, alumno=alumnos[1], pagador=pagador,
+            periodo=periodo, total=47.5, metodo="efectivo", estado="pendiente",
+        )
+        f = self.fila("Parcial")
+        self.assertEqual(f["estado_pago"], "parcial")
