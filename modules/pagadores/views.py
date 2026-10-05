@@ -7,7 +7,7 @@ from rest_framework.viewsets import ModelViewSet
 from modules.authentication.rbac import NotReception, marca_scope_for
 from modules.core.mixins import ContactableViaPagadorMixin
 from modules.tarifas.pricing import (
-    cuota_bono_familia, perfil_semanal_alumno, precio_clase_grupo,
+    cuota_bono_familia, cuota_ranger_express, perfil_semanal_alumno, precio_clase_grupo,
 )
 from .models import Pagador
 from .serializers import PagadorSerializer
@@ -112,6 +112,19 @@ class PagadorCalculadoraView(APIView):
                         "dias_semana": p["dias"], "duracion_min": p["duracion"],
                         "precio": precio,
                     })
+
+            # The Ranger Express: línea fija y separada, 10€ por cada hijo
+            # con el servicio — nunca entra en la suma del 5% de Bono
+            # Familia (eso solo aplica a Clases Grupo), se suma después.
+            alumnos_express = [a for a in alumnos if a.ranger_express]
+            if alumnos_express:
+                total_express = sum(Decimal(str(a.recogida_precio)) for a in alumnos_express)
+                total += total_express
+                items.append({
+                    "tipo": "ranger_express",
+                    "alumnos": [a.nombre for a in alumnos_express],
+                    "precio": float(total_express),
+                })
 
             resultado.append({
                 "pagador_id": pagador.id,

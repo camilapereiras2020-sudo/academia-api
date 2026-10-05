@@ -217,6 +217,12 @@ class LeadViewSet(ModelViewSet):
                 email=lead.email,
             )
 
+        # The Ranger Express: checkbox opcional al matricular — si la marcan,
+        # el resto de la configuración (colegio, hora, días) se completa
+        # después en la ficha del alumno; acá solo activa el servicio con el
+        # precio por defecto (Alumno.recogida_precio).
+        ranger_express = bool(request.data.get("ranger_express"))
+
         alumno = Alumno.objects.create(
             academia=request.user.tenant,
             nombre=lead.nombre_alumno,
@@ -225,6 +231,7 @@ class LeadViewSet(ModelViewSet):
             nivel=lead.nivel_estimado or "",
             notas=lead.notas or "",
             es_adulto=lead.es_adulto,
+            ranger_express=ranger_express,
         )
         alumno.grupos.add(grupo)
 

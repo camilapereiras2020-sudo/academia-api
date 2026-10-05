@@ -7,6 +7,11 @@ el PDF y después aquí, en frontend/src/features/tarifas/pages/PreciosPage.tsx
 y en frontend/src/features/pagadores/pages/CalculadoraPage.tsx. Los tests de
 modules/tarifas/tests.py fijan estas cifras.
 
+Excepción: Bono Familia de 3-4 hermanos, o 2 hermanos en tramos distintos,
+no tiene tarifa publicada — cuota_bono_familia cae a una fórmula ESTIMADA
+(_cuota_bono_familia_estimada) en vez de una tabla, y lo marca con un aviso
+explícito para que no se confunda con la tarifa oficial de 2 hermanos.
+
 Deliberately NOT modeled through modules.tarifas.Tarifa — that model is a
 flat per-tariff price lookup and doesn't capture a per-día-de-la-semana tier
 crossed with session duration (1h / 90min), which is the actual shape of
@@ -82,44 +87,123 @@ def perfil_semanal_alumno(alumno):
     return dias_semana, duracion_predominante, aviso
 
 
+def _redondear_5(valor):
+    """Redondea a los 5€ más cercanos — mismo criterio que usa dirección
+    para fijar BONO_FAMILIA en 60 min (ver _cuota_bono_familia_estimada)."""
+    valor = Decimal(str(valor))
+    return (valor / 5).quantize(Decimal("1"), rounding=ROUND_HALF_UP) * 5
+
+
+def _cuota_bono_familia_estimada(perfiles):
+    """Fallback para 3-4 hermanos, o 2 hermanos en tramos distintos — casos
+    que NO están en la tabla oficial BONO_FAMILIA (esa tabla solo cubre
+    exactamente 2 hermanos con el mismo tramo). No hay tarifa publicada para
+    estos casos, así que se ESTIMA: se suma el precio individual
+    (precio_clase_grupo) de cada hermano según su propio tramo, se aplica el
+    5% de descuento familiar sobre la suma y se redondea a los 5€ más
+    cercanos — el mismo cálculo que reproduce la tabla oficial en 60 min,
+    pero en 90 min la tabla real trae descuentos extra negociados aparte que
+    esta fórmula NO reproduce (verificado contra Tarifa-Rangers-26-27.pdf:
+    90 min/1 día da 145 en vez de 130, 90 min/3 días da 380 en vez de 375).
+    Por eso el aviso dice explícitamente que es una estimación a confirmar,
+    nunca "tarifa oficial".
+
+    El total se reparte en proporción al precio individual de cada
+    hermano — quien va más horas paga más — ajustando el céntimo en el
+    último para que la suma cierre exacta.
+
+    Returns (info, avisos) — info is None if some sibling's profile is
+    missing/off-table, igual que cuota_bono_familia."""
+    precios = []
+    for alumno, (dias, duracion, aviso) in perfiles:
+        if aviso or duracion is None:
+            return None, [f"{alumno.nombre}: {aviso or 'sin horario asignado'}"]
+        precio = precio_clase_grupo(dias, duracion)
+        if precio is None:
+            return None, [f"{alumno.nombre}: {dias} días/sem a {duracion} min no está en la tarifa."]
+        precios.append((alumno, Decimal(precio)))
+
+    suma = sum(precio for _, precio in precios)
+    total = _redondear_5(suma * Decimal("0.95"))
+
+    cuotas_por_hermano = {}
+    asignado = Decimal("0")
+    for i, (alumno, precio) in enumerate(precios):
+        if i < len(precios) - 1:
+            parte = (total * precio / suma).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            cuotas_por_hermano[alumno] = parte
+            asignado += parte
+        else:
+            cuotas_por_hermano[alumno] = total - asignado
+
+    return {
+        "cuotas_por_hermano": cuotas_por_hermano, "total": total, "n_hermanos": len(precios),
+    }, [
+        "Bono Familia ESTIMADO (no hay tarifa oficial publicada para este caso — "
+        "confirmar con dirección antes de facturar)."
+    ]
+
+
 def cuota_bono_familia(alumnos_hermanos):
-    """Bono Familia con la tabla fija de la tarifa, sin fórmula.
+    """Bono Familia: tabla fija de la tarifa cuando aplica (2 hermanos,
+    mismo tramo); fórmula estimada como fallback para 3-4 hermanos o
+    tramos distintos (_cuota_bono_familia_estimada). Más de 4 hermanos, o
+    cualquier perfil sin horario/fuera de tabla, sigue sin estimación.
 
-    Solo aplica a exactamente 2 hermanos que van los mismos días/semana y la
-    misma duración: el precio sale de BONO_FAMILIA y se reparte a partes
-    iguales (el céntimo sobrante, si lo hay, va al último para que la suma
-    cierre exacta en el precio de la tarifa). Cualquier otro caso no está en
-    la tarifa y se calcula a mano.
-
-    Returns (info, avisos). info is None when the tarifa doesn't cover the
-    case — the caller falls back to "precio manual"; avisos explains why."""
+    Returns (info, avisos). info is None when ni la tabla ni la fórmula
+    cubren el caso — the caller falls back to "precio manual"; avisos
+    explains why."""
     perfiles = [(a, perfil_semanal_alumno(a)) for a in alumnos_hermanos]
     avisos = [f"{a.nombre}: {aviso}" for a, (_, _, aviso) in perfiles if aviso]
     if avisos:
         return None, avisos
-    if len(perfiles) != BONO_FAMILIA_HERMANOS:
-        return None, [f"Bono Familia de {len(perfiles)} hermanos no está en la tarifa — calcular a mano."]
 
-    combinaciones = {(dias, duracion) for _, (dias, duracion, _) in perfiles}
-    if len(combinaciones) != 1:
-        return None, ["Bono Familia: los hermanos van distintos días o duración — calcular a mano."]
-    dias, duracion = combinaciones.pop()
-    precio = precio_bono_familia(dias, duracion)
-    if precio is None:
-        return None, [f"Bono Familia: {dias} días/sem a {duracion} min no está en la tarifa — calcular a mano."]
+    n_hermanos = len(perfiles)
+    if n_hermanos not in (2, 3, 4):
+        return None, [f"Bono Familia de {n_hermanos} hermanos no está en la tarifa — calcular a mano."]
 
-    total = Decimal(precio)
-    mitad = (total / BONO_FAMILIA_HERMANOS).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-    (primero, _), (segundo, _) = perfiles
-    cuotas_por_hermano = {primero: mitad, segundo: total - mitad}
-    return {
-        "cuotas_por_hermano": cuotas_por_hermano, "total": total,
-        "n_hermanos": BONO_FAMILIA_HERMANOS, "dias_semana": dias, "duracion_min": duracion,
-    }, []
+    if n_hermanos == BONO_FAMILIA_HERMANOS:
+        combinaciones = {(dias, duracion) for _, (dias, duracion, _) in perfiles}
+        if len(combinaciones) == 1:
+            dias, duracion = combinaciones.pop()
+            precio = precio_bono_familia(dias, duracion)
+            if precio is not None:
+                total = Decimal(precio)
+                mitad = (total / BONO_FAMILIA_HERMANOS).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                (primero, _), (segundo, _) = perfiles
+                cuotas_por_hermano = {primero: mitad, segundo: total - mitad}
+                return {
+                    "cuotas_por_hermano": cuotas_por_hermano, "total": total,
+                    "n_hermanos": n_hermanos, "dias_semana": dias, "duracion_min": duracion,
+                }, []
+
+    # 3-4 hermanos, o 2 hermanos en tramos distintos / fuera de la tabla
+    # oficial: estimar con la fórmula de reparto proporcional.
+    return _cuota_bono_familia_estimada(perfiles)
+
+
+def cuota_ranger_express(alumno):
+    """The Ranger Express (recogida del cole): cargo fijo mensual, SEPARADO
+    de la cuota de clases — nunca entra en la suma del 5% de descuento de
+    Bono Familia (ese descuento solo aplica a Clases Grupo). None si el
+    alumno no tiene el servicio."""
+    if not alumno.ranger_express:
+        return None
+    return float(alumno.recogida_precio)
 
 
 def calcular_cuota_alumno(alumno):
-    """Cuota mensual automática para la ficha del alumno (AlumnoDetailPage).
+    """Cuota mensual automática para la ficha del alumno (AlumnoDetailPage):
+    cuota de clase + "ranger_express" como línea aparte (ver
+    cuota_ranger_express — nunca se mezcla con el prorrateo de Bono
+    Familia)."""
+    resultado = _calcular_cuota_clase(alumno)
+    resultado["ranger_express"] = cuota_ranger_express(alumno)
+    return resultado
+
+
+def _calcular_cuota_clase(alumno):
+    """Cuota mensual de la clase (sin Ranger Express — ver calcular_cuota_alumno).
     Nunca lanza — cualquier caso no cubierto vuelve con cuota=None y un
     aviso explicando por qué (para que el frontend muestre "precio manual").
 
