@@ -215,7 +215,19 @@ class PagoViewSet(ModelViewSet):
             year, month = periodo.split("-")
             cargos_extra = alumno.cargos_extra.filter(fecha__year=year, fecha__month=month)
             extras = [{"concepto": c.concepto, "importe": float(c.monto)} for c in cargos_extra]
-            total = grupo.tarifa + sum(c.monto for c in cargos_extra)
+            extras_total = sum(c.monto for c in cargos_extra)
+
+            # The Ranger Express: tarifa plana mensual, línea propia junto a
+            # los CargoExtra — igual que ellos, no toca la mensualidad fija.
+            # Atribución de este ingreso a una profesora/marca concreta: no
+            # modelado (ver tarifas.pricing.cuota_ranger_express) — queda
+            # dentro del total de este Pago, bajo la marca del alumno, sin
+            # distinguir que es un servicio aparte de las clases.
+            if alumno.ranger_express:
+                extras.append({"concepto": "The Ranger Express", "importe": float(alumno.recogida_precio)})
+                extras_total += alumno.recogida_precio
+
+            total = grupo.tarifa + extras_total
 
             pago = Pago.objects.create(
                 academia=request.user.tenant, marca=alumno.marca, emisor=emisor,

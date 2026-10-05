@@ -65,6 +65,17 @@ class Alumno(models.Model):
     # pricing.calcular_cuota_alumno — para clases privadas (sin fórmula) y
     # los casos Cami&Co cotizados fuera de tabla. None = seguir calculando solo.
     cuota_manual = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
+    # The Ranger Express — servicio de recogida del cole. Cargo fijo mensual,
+    # SEPARADO de la cuota de clases (ver tarifas.pricing.cuota_ranger_express):
+    # no lleva el 5% de descuento de Bono Familia, que solo aplica a Clases
+    # Grupo. Tarifa plana aunque no venga todos los días, y se cobra el mes
+    # completo si deja el servicio a mitad de mes (decisión de dirección).
+    ranger_express = models.BooleanField(default=False)
+    recogida_colegio = models.CharField(max_length=200, blank=True)
+    recogida_hora = models.TimeField(null=True, blank=True)
+    # Días que lo recogen, mismo formato que Grupo.horarios: 0=Lunes..4=Viernes.
+    recogida_dias = models.JSONField(default=list, blank=True)
+    recogida_precio = models.DecimalField(max_digits=8, decimal_places=2, default=10)
     nivel = models.CharField(max_length=10, blank=True)
     curso = models.CharField(max_length=20, choices=CURSO_CHOICES, blank=True)
     notas = models.TextField(blank=True)

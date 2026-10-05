@@ -150,6 +150,9 @@ class AlumnoViewSet(ContactableViaPagadorMixin, ModelViewSet):
             qs = qs.filter(empresa_id=empresa)
         if es_fundae is not None:
             qs = qs.filter(es_fundae=es_fundae.lower() == "true")
+        ranger_express = self.request.query_params.get("ranger_express")
+        if ranger_express is not None:
+            qs = qs.filter(ranger_express=ranger_express.lower() == "true")
         if tipo == "empresa":
             qs = qs.filter(empresa__isnull=False)
         elif tipo == "particular":

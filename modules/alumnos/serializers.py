@@ -45,6 +45,7 @@ class AlumnoSerializer(TenantScopedFKMixin, serializers.ModelSerializer):
             "foto_url", "nivel_objetivo", "examen_objetivo", "colegio_origen", "idioma_nativo",
             "contacto_emergencia_nombre", "contacto_emergencia_telefono",
             "codigo_clase", "cuota_manual",
+            "ranger_express", "recogida_colegio", "recogida_hora", "recogida_dias", "recogida_precio",
         ]
         read_only_fields = ["id", "created_at", "grupos_detalle"]
 
