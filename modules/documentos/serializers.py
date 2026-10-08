@@ -24,18 +24,22 @@ class DocumentoSerializer(serializers.ModelSerializer):
     drive_url = serializers.SerializerMethodField()
     pago_info = serializers.SerializerMethodField()
     pagos_adicionales = serializers.PrimaryKeyRelatedField(many=True, read_only=True)
+    provisional = serializers.SerializerMethodField()
 
     class Meta:
         model = Documento
         fields = [
             "id", "pago", "pagos_adicionales", "tipo", "nombre", "num_doc",
             "mime_type", "download_url", "drive_url", "pago_info", "created_at",
-            "estado", "emitida_at", "anulada_at", "motivo_anulacion",
+            "estado", "emitida_at", "anulada_at", "motivo_anulacion", "emisor", "provisional",
         ]
         read_only_fields = [
             "id", "created_at", "download_url", "drive_url", "pago_info",
-            "estado", "emitida_at", "anulada_at", "motivo_anulacion", "pagos_adicionales",
+            "estado", "emitida_at", "anulada_at", "motivo_anulacion", "pagos_adicionales", "emisor", "provisional",
         ]
+
+    def get_provisional(self, obj):
+        return obj.estado == "cuarentena"
 
     def get_download_url(self, obj):
         return f"/api/v1/documentos/{obj.id}/descargar/"

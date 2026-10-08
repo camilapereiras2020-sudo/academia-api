@@ -369,7 +369,7 @@ class PagoViewSet(ModelViewSet):
         # actually issued, no Drive/local file) is meant to be freely
         # discardable along with its draft Pago, so it's cleaned up
         # explicitly here rather than relying on cascade.
-        pago.documentos.filter(estado="borrador").delete()
+        pago.documentos.filter(estado__in=["borrador", "cuarentena"]).delete()
         return super().destroy(request, *args, **kwargs)
 
     @action(detail=True, methods=["post"], url_path="anular")

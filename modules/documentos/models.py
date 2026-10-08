@@ -82,6 +82,11 @@ class Documento(models.Model):
         blank=True,
         related_name="documentos",
     )
+    # Emisor chosen explicitly (combined invoices across both brands). Null =
+    # use pago.emisor, which is every document issued before this field existed.
+    emisor     = models.ForeignKey(
+        "documentos.Emisor", on_delete=models.PROTECT, null=True, blank=True, related_name="documentos"
+    )
     tipo       = models.CharField(max_length=20, choices=TIPO_CHOICES)
     nombre     = models.CharField(max_length=200)
     num_doc    = models.CharField(max_length=30, blank=True)
