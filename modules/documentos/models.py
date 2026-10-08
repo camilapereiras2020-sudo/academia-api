@@ -12,6 +12,10 @@ TIPO_CHOICES = [
 
 ESTADO_CHOICES = [
     ("borrador", "Borrador"),
+    # "Modo cuarentena" (User.modo_cuarentena): documento provisional, sin
+    # número, sin envío ni Drive. Se puede editar/eliminar/juntar; al
+    # confirmarlo pasa a "emitida" y recibe su número definitivo.
+    ("cuarentena", "En cuarentena"),
     ("emitida", "Emitida"),
     ("anulada", "Anulada"),
     ("rectificada", "Rectificada"),
@@ -113,6 +117,10 @@ class Documento(models.Model):
     @property
     def is_issued(self) -> bool:
         """True if this document was ever actually uploaded/sent — never hard-deletable."""
+        if self.estado == "cuarentena":
+            # Provisional: has a preview PDF but no número, so deleting it
+            # leaves no gap in the sequence.
+            return False
         return (
             self.estado != "borrador"
             or bool(self.s3_key)
