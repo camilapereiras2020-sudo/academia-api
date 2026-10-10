@@ -2,7 +2,7 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIClient
 
-from .models import Aviso
+from .models import Aviso, AvisoLectura, AvisoMensaje
 
 User = get_user_model()
 
@@ -103,3 +103,101 @@ class AvisoViewSetTests(TestCase):
         resp = self.client.get("/api/v1/avisos/?desde=2026-09-01&hasta=2026-09-30")
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json(), [])
+
+
+class AvisoHiloTests(TestCase):
+    """Conversaciones: respuestas dentro de un aviso, leído/no leído y resolver."""
+
+    def setUp(self):
+        self.owner = User.objects.create_user(username="cami", email="cami@example.com", password="x")
+        self.candela = User.objects.create_user(
+            username="candela", email="candela@example.com", password="x",
+            role="co_manager", academia_owner=self.owner,
+        )
+        self.sofia = User.objects.create_user(
+            username="sofia", email="sofia@example.com", password="x",
+            role="reception", academia_owner=self.owner,
+        )
+        otro = User.objects.create_user(username="otro", email="otro@example.com", password="x")
+        self.ajena = User.objects.create_user(
+            username="ajena", email="ajena@example.com", password="x", role="reception", academia_owner=otro,
+        )
+        self.api = APIClient()
+
+    def como(self, user):
+        self.api.force_authenticate(user)
+        return self.api
+
+    def nuevo(self, autor, **kw):
+        return self.como(autor).post("/api/v1/avisos/", {"titulo": "Hola", **kw}, format="json")
+
+    def pendientes(self, user):
+        return [a["id"] for a in self.como(user).get("/api/v1/avisos/?para_mi=1").json()]
+
+    def test_contestar_y_ver_el_hilo_en_orden(self):
+        a = self.nuevo(self.candela, para=self.sofia.id).json()
+        self.assertEqual(self.como(self.sofia).post(f"/api/v1/avisos/{a['id']}/mensajes/", {"texto": "Vale"}, format="json").status_code, 201)
+        self.como(self.candela).post(f"/api/v1/avisos/{a['id']}/mensajes/", {"texto": "Gracias"}, format="json")
+        hilo = self.como(self.sofia).get(f"/api/v1/avisos/{a['id']}/mensajes/").json()
+        self.assertEqual([(m["autor_nombre"], m["texto"]) for m in hilo], [("sofia", "Vale"), ("candela", "Gracias")])
+
+    def test_mensaje_vacio_se_rechaza(self):
+        a = self.nuevo(self.candela, para=self.sofia.id).json()
+        r = self.como(self.sofia).post(f"/api/v1/avisos/{a['id']}/mensajes/", {"texto": "   "}, format="json")
+        self.assertEqual(r.status_code, 400)
+
+    def test_no_leido_para_quien_no_escribio_lo_ultimo(self):
+        a = self.nuevo(self.candela, para=self.sofia.id).json()
+        self.assertEqual(self.pendientes(self.sofia), [a["id"]])
+        self.assertEqual(self.pendientes(self.candela), [])            # lo escribí yo
+        self.como(self.sofia).post(f"/api/v1/avisos/{a['id']}/mensajes/", {"texto": "Ok"}, format="json")
+        self.assertEqual(self.pendientes(self.sofia), [])              # ya contesté
+        self.assertEqual(self.pendientes(self.candela), [a["id"]])     # me contestaron
+
+    def test_abrir_el_hilo_o_marcar_leido_lo_quita_de_pendientes(self):
+        a = self.nuevo(self.candela, para=self.sofia.id).json()
+        self.como(self.sofia).get(f"/api/v1/avisos/{a['id']}/mensajes/")
+        self.assertEqual(self.pendientes(self.sofia), [])
+        self.como(self.candela).post(f"/api/v1/avisos/{a['id']}/mensajes/", {"texto": "Y otra cosa"}, format="json")
+        self.assertEqual(self.pendientes(self.sofia), [a["id"]])        # vuelve a salir
+        self.assertEqual(self.como(self.sofia).post(f"/api/v1/avisos/{a['id']}/leido/").status_code, 204)
+        self.assertEqual(self.pendientes(self.sofia), [])
+
+    def test_resuelto_sale_de_pendientes_para_todos_y_contestar_lo_reabre(self):
+        a = self.nuevo(self.candela, para=self.sofia.id).json()
+        self.como(self.sofia).patch(f"/api/v1/avisos/{a['id']}/", {"hecha": True}, format="json")
+        self.assertEqual(self.pendientes(self.sofia), [])
+        self.como(self.candela).post(f"/api/v1/avisos/{a['id']}/mensajes/", {"texto": "Una cosa más"}, format="json")
+        self.assertFalse(Aviso.objects.get(pk=a["id"]).hecha)
+        self.assertEqual(self.pendientes(self.sofia), [a["id"]])
+
+    def test_todo_el_equipo_es_un_solo_hilo_compartido(self):
+        a = self.nuevo(self.sofia, para_todos=True).json()
+        self.assertTrue(a["para_todos"])
+        self.assertIsNone(a["para"])
+        self.assertEqual(Aviso.objects.count(), 1)
+        self.assertEqual(self.pendientes(self.owner), [a["id"]])
+        self.assertEqual(self.pendientes(self.candela), [a["id"]])
+        self.assertEqual(self.pendientes(self.sofia), [])
+        self.como(self.candela).post(f"/api/v1/avisos/{a['id']}/mensajes/", {"texto": "Yo me encargo"}, format="json")
+        self.assertEqual(self.pendientes(self.owner), [a["id"]])        # lo ve la tercera
+        self.assertEqual(self.pendientes(self.sofia), [a["id"]])
+        self.assertEqual(self.pendientes(self.candela), [])
+
+    def test_un_tercero_no_puede_contestar_un_aviso_privado(self):
+        a = self.nuevo(self.candela, para=self.sofia.id).json()
+        r = self.como(self.owner).post(f"/api/v1/avisos/{a['id']}/mensajes/", {"texto": "me meto"}, format="json")
+        self.assertIn(r.status_code, (403, 404))
+        self.assertEqual(AvisoMensaje.objects.count(), 0)
+
+    def test_otra_academia_no_ve_ni_contesta(self):
+        a = self.nuevo(self.sofia, para_todos=True).json()
+        c = self.como(self.ajena)
+        self.assertEqual(c.get(f"/api/v1/avisos/{a['id']}/mensajes/").status_code, 404)
+        self.assertEqual(c.post(f"/api/v1/avisos/{a['id']}/mensajes/", {"texto": "x"}, format="json").status_code, 404)
+
+    def test_el_listado_trae_contador_y_ultimo_texto(self):
+        a = self.nuevo(self.candela, para=self.sofia.id).json()
+        self.como(self.sofia).post(f"/api/v1/avisos/{a['id']}/mensajes/", {"texto": "Vale, hecho"}, format="json")
+        fila = [x for x in self.como(self.candela).get("/api/v1/avisos/").json() if x["id"] == a["id"]][0]
+        self.assertEqual((fila["mensajes_count"], fila["ultimo_texto"], fila["no_leido"]), (1, "Vale, hecho", True))
