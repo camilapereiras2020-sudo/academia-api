@@ -12,6 +12,10 @@ TIPO_CHOICES = [
 
 ESTADO_CHOICES = [
     ("borrador", "Borrador"),
+    # "Modo cuarentena" (User.modo_cuarentena): documento provisional, sin
+    # número, sin envío ni Drive. Se puede editar/eliminar/juntar; al
+    # confirmarlo pasa a "emitida" y recibe su número definitivo.
+    ("cuarentena", "En cuarentena"),
     ("emitida", "Emitida"),
     ("anulada", "Anulada"),
     ("rectificada", "Rectificada"),
@@ -78,6 +82,11 @@ class Documento(models.Model):
         blank=True,
         related_name="documentos",
     )
+    # Emisor chosen explicitly (combined invoices across both brands). Null =
+    # use pago.emisor, which is every document issued before this field existed.
+    emisor     = models.ForeignKey(
+        "documentos.Emisor", on_delete=models.PROTECT, null=True, blank=True, related_name="documentos"
+    )
     tipo       = models.CharField(max_length=20, choices=TIPO_CHOICES)
     nombre     = models.CharField(max_length=200)
     num_doc    = models.CharField(max_length=30, blank=True)
@@ -113,6 +122,10 @@ class Documento(models.Model):
     @property
     def is_issued(self) -> bool:
         """True if this document was ever actually uploaded/sent — never hard-deletable."""
+        if self.estado == "cuarentena":
+            # Provisional: has a preview PDF but no número, so deleting it
+            # leaves no gap in the sequence.
+            return False
         return (
             self.estado != "borrador"
             or bool(self.s3_key)

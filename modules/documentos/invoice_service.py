@@ -746,7 +746,28 @@ def _pagador_display_fields(pagador, alumno):
     """Returns (nombre, nif, telefono, email) to render on the invoice/recibo.
     If there's no Pagador on file but the alumno is an adult who pays for
     themself (Alumno.es_adulto), fall back to the alumno's own contact data
-    instead of leaving the document blank."""
+    instead of leaving the document blank.
+
+    An adult self-payer can also end up *with* a Pagador row linked (e.g. one
+    created before this fallback existed, or from picking themself in the
+    Pagador combobox) that only has a short/roster name and no NIF/tel/email
+    on file — the real contact data lives on the alumno's own "Datos
+    generales" instead. In that case (alumno.pagador IS this same pagador),
+    the alumno's own record is the one staff actually keeps up to date, so
+    it takes priority; the linked Pagador row's fields are only a fallback
+    for whichever ones the alumno record itself left blank."""
+    es_autopagador = (
+        pagador is not None and alumno is not None
+        and getattr(alumno, "es_adulto", False)
+        and getattr(alumno, "pagador_id", None) == pagador.id
+    )
+    if es_autopagador:
+        return (
+            alumno.nombre or pagador.nombre,
+            getattr(alumno, "dni", "") or getattr(pagador, "nif", "") or "",
+            getattr(alumno, "telefono", "") or getattr(pagador, "telefono", "") or "",
+            getattr(alumno, "email", "") or getattr(pagador, "email", "") or "",
+        )
     if pagador is not None:
         return (
             pagador.nombre,
@@ -761,6 +782,10 @@ def _pagador_display_fields(pagador, alumno):
             getattr(alumno, "telefono", "") or "",
             getattr(alumno, "email", "") or "",
         )
+    if alumno is not None:
+        # Menor sin pagador registrado (pago en mano, sin datos): al menos
+        # el nombre del alumno, para que el documento no salga en blanco.
+        return (alumno.nombre, "", "", "")
     return ("", "", "", "")
 
 
@@ -773,12 +798,10 @@ def _prepare_invoice_pdf(pago, tipo="factura"):
     callers should store *this* on the Documento, not their own guess (the
     `tipo` param above is legacy and not used for numbering).
     """
-    alumno_adulto_sin_pagador = (
-        not pago.pagador_id and pago.alumno_id and getattr(pago.alumno, "es_adulto", False)
-    )
-    if pago.estado_carga == "pendiente_completar" or not pago.alumno_id or (
-        not pago.pagador_id and not alumno_adulto_sin_pagador
-    ):
+    # Sin pagador también vale: alumnos de antes sin datos del pagador que
+    # pagan en mano ("Otros" en el frontend). El documento sale a nombre del
+    # alumno — ver _pagador_display_fields.
+    if pago.estado_carga == "pendiente_completar" or not pago.alumno_id:
         raise ValueError(
             f"Pago {pago.id} está incompleto (estado_carga={pago.estado_carga!r}, "
             f"alumno={pago.alumno_id}, pagador={pago.pagador_id}) — "
@@ -866,12 +889,10 @@ def generate_preview_pdf_bytes(pago) -> bytes:
     no DB writes at all, so it's safe to call as many times as staff wants
     while they're still reviewing/editing the pago.
     """
-    alumno_adulto_sin_pagador = (
-        not pago.pagador_id and pago.alumno_id and getattr(pago.alumno, "es_adulto", False)
-    )
-    if pago.estado_carga == "pendiente_completar" or not pago.alumno_id or (
-        not pago.pagador_id and not alumno_adulto_sin_pagador
-    ):
+    # Sin pagador también vale: alumnos de antes sin datos del pagador que
+    # pagan en mano ("Otros" en el frontend). El documento sale a nombre del
+    # alumno — ver _pagador_display_fields.
+    if pago.estado_carga == "pendiente_completar" or not pago.alumno_id:
         raise ValueError(f"Pago {pago.id} está incompleto — complétalo antes de previsualizar.")
 
     emisor = pago.emisor
@@ -974,20 +995,10 @@ def generate_invoice_pdf_async(pago, tipo="factura"):
     return num_doc, tipo_doc, pdf_bytes, schedule_drive_upload
 
 
-def _prepare_combined_invoice_pdf(pagos, emisor_id=None, tipo="factura"):
-    """Like _prepare_invoice_pdf, but for a "family" invoice bundling several
-    Pagos (siblings) onto one document. All pagos must share the same
-    pagador — that's the whole point, one payer's combined bill — and none
-    may already have an issued document (as a primary pago or as someone
-    else's pagos_adicionales). The single-pago path (_prepare_invoice_pdf)
-    is untouched; this is a separate, additive function.
-
-    emisor_id: which of the two Emisor rows issues this invoice. Required
-    when the pagos span more than one brand's default emisor (there's no
-    way to guess which sister invoices a mixed-brand family) — optional and
-    defaults to the primary pago's own emisor when all pagos already agree
-    on one.
-    """
+def validate_combined_pagos(pagos, emisor_id=None):
+    """Checks shared by the immediate combined invoice and the quarantine
+    flow: same pagador, complete pagos, none already documented, and a
+    resolvable Emisor. Returns the Emisor. Allocates nothing."""
     if not pagos:
         raise ValueError("No hay pagos para combinar.")
 
@@ -1016,6 +1027,25 @@ def _prepare_combined_invoice_pdf(pagos, emisor_id=None, tipo="factura"):
             )
         emisor = pagos[0].emisor
 
+    return emisor
+
+
+def _prepare_combined_invoice_pdf(pagos, emisor_id=None, tipo="factura"):
+    """Like _prepare_invoice_pdf, but for a "family" invoice bundling several
+    Pagos (siblings) onto one document. All pagos must share the same
+    pagador — that's the whole point, one payer's combined bill — and none
+    may already have an issued document (as a primary pago or as someone
+    else's pagos_adicionales). The single-pago path (_prepare_invoice_pdf)
+    is untouched; this is a separate, additive function.
+
+    emisor_id: which of the two Emisor rows issues this invoice. Required
+    when the pagos span more than one brand's default emisor (there's no
+    way to guess which sister invoices a mixed-brand family) — optional and
+    defaults to the primary pago's own emisor when all pagos already agree
+    on one.
+    """
+    emisor = validate_combined_pagos(pagos, emisor_id)
+
     primary = pagos[0]
     pagador = primary.pagador
     pagador_nombre, pagador_nif, pagador_tel, pagador_email = _pagador_display_fields(pagador, None)
@@ -1026,6 +1056,7 @@ def _prepare_combined_invoice_pdf(pagos, emisor_id=None, tipo="factura"):
     num_doc = primary.numero_factura_reservado
     if not num_doc:
         from django.db import transaction
+        from modules.documentos.models import Emisor as EmisorModel
         with transaction.atomic():
             locked_emisor = EmisorModel.objects.select_for_update().get(pk=emisor.pk)
             num_doc = _next_invoice_number(locked_emisor, tipo_doc)
@@ -1091,18 +1122,18 @@ def generate_combined_invoice_pdf_async(pagos, emisor_id=None, tipo="factura"):
     return num_doc, tipo_doc, pdf_bytes, schedule_drive_upload
 
 
-def _rerender_documento_pdf(documento, watermark: str = None, subfolder: str = None) -> str:
-    """Shared by regenerate_anulada_pdf/reactivar_documento: re-render a
-    Documento's PDF (reusing its existing num_doc — never consumes a new
-    invoice number) and move it in Drive, deleting the old file. Returns the
-    new Drive file id. Branches on whether this is a combined (family)
-    document or an ordinary single-pago one — same num_doc/emisor/fecha
-    either way, just a different renderer and item list.
-    """
+def render_documento_pdf(documento, watermark: str = None, num_doc: str = None, tipo: str = None):
+    """Render a Documento's PDF from its pagos' *current* data. Pure/local (no
+    Drive, no number allocation). Defaults to the documento's own num_doc/tipo;
+    the quarantine flow overrides them ("Provisional" now, the real number at
+    confirmation). Branches on single vs combined (family) document.
+    Returns (pdf_bytes, fecha, emisor)."""
+    num_doc = num_doc if num_doc is not None else documento.num_doc
+    tipo = tipo or documento.tipo
     pago = documento.pago
     if pago is None:
         raise ValueError(f"Documento {documento.id} has no linked Pago; cannot regenerate.")
-    emisor = pago.emisor
+    emisor = documento.emisor or pago.emisor
     if emisor is None:
         raise ValueError(f"Pago {pago.id} has no emisor assigned.")
 
@@ -1131,9 +1162,9 @@ def _rerender_documento_pdf(documento, watermark: str = None, subfolder: str = N
             pagador_email   = pagador_email,
             items_alumnos   = items_alumnos,
             periodo         = pago.periodo,
-            num_doc         = documento.num_doc,
+            num_doc         = num_doc,
             fecha           = fecha,
-            tipo            = documento.tipo,
+            tipo            = tipo,
             theme           = theme,
             watermark       = watermark,
         )
@@ -1165,12 +1196,24 @@ def _rerender_documento_pdf(documento, watermark: str = None, subfolder: str = N
             total           = pago.total,
             metodo          = metodo,
             concepto_libre  = getattr(pago, "concepto_libre", "") or "",
-            num_doc         = documento.num_doc,
+            num_doc         = num_doc,
             fecha           = fecha,
-            tipo            = documento.tipo,
+            tipo            = tipo,
             theme           = theme,
             watermark       = watermark,
         )
+    return pdf_bytes, fecha, emisor
+
+
+def _rerender_documento_pdf(documento, watermark: str = None, subfolder: str = None) -> str:
+    """Shared by regenerate_anulada_pdf/reactivar_documento: re-render a
+    Documento's PDF (reusing its existing num_doc — never consumes a new
+    invoice number) and move it in Drive, deleting the old file. Returns the
+    new Drive file id. Branches on whether this is a combined (family)
+    document or an ordinary single-pago one — same num_doc/emisor/fecha
+    either way, just a different renderer and item list.
+    """
+    pdf_bytes, fecha, emisor = render_documento_pdf(documento, watermark=watermark)
 
     folder_id = emisor.drive_folder_id or os.environ.get("GOOGLE_DRIVE_FOLDER_ID") or ""
     new_id = upload_to_drive(

@@ -140,6 +140,9 @@ class DocumentoViewSet(ModelViewSet):
         pago = self.request.query_params.get("pago")
         tipo = self.request.query_params.get("tipo")
         alumno = self.request.query_params.get("alumno")
+        estado = self.request.query_params.get("estado")
+        if estado:
+            qs = qs.filter(estado=estado)
         if pago:
             qs = qs.filter(pago_id=pago)
         if tipo:
@@ -153,6 +156,7 @@ class DocumentoViewSet(ModelViewSet):
         from django.db import transaction
         from modules.pagos.models import Pago
         from .invoice_service import generate_invoice_pdf_async
+        from . import cuarentena
 
         pago_id = request.data.get("pago_id")
 
@@ -184,6 +188,19 @@ class DocumentoViewSet(ModelViewSet):
             existing = pago.documentos.filter(estado="emitida").order_by("-created_at").first()
             if existing:
                 return Response(DocumentoSerializer(existing).data, status=status.HTTP_200_OK)
+
+            # Un documento ya en cuarentena de este pago se devuelve tal cual
+            # (también con el modo apagado: hay que confirmarlo, no duplicarlo).
+            in_q = pago.documentos.filter(estado=cuarentena.ESTADO).order_by("-created_at").first()
+            if in_q:
+                return Response(DocumentoSerializer(in_q).data, status=status.HTTP_200_OK)
+
+            if request.user.tenant.modo_cuarentena:
+                try:
+                    doc, created = cuarentena.crear_documento_cuarentena(request.user.tenant, [pago])
+                except cuarentena.CuarentenaError as e:
+                    return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+                return Response(DocumentoSerializer(doc).data, status=status.HTTP_201_CREATED)
 
             try:
                 num_doc, tipo, pdf_bytes, schedule_drive_upload = generate_invoice_pdf_async(pago)
@@ -236,6 +253,7 @@ class DocumentoViewSet(ModelViewSet):
         from django.db import transaction
         from modules.pagos.models import Pago
         from .invoice_service import generate_combined_invoice_pdf_async
+        from . import cuarentena
 
         pago_ids = request.data.get("pago_ids") or []
         emisor_id = request.data.get("emisor_id")
@@ -256,7 +274,17 @@ class DocumentoViewSet(ModelViewSet):
         pagos = [pagos_by_id[pid] for pid in pago_ids]
 
         with transaction.atomic():
-            Pago.objects.select_for_update().filter(id__in=[p.id for p in pagos])
+            # list() forces the query: a bare lazy queryset never takes the lock.
+            list(Pago.objects.select_for_update().filter(id__in=[p.id for p in pagos]))
+
+            if request.user.tenant.modo_cuarentena:
+                try:
+                    doc, _ = cuarentena.crear_documento_cuarentena(
+                        request.user.tenant, pagos, emisor_id=emisor_id
+                    )
+                except cuarentena.CuarentenaError as e:
+                    return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+                return Response(DocumentoSerializer(doc).data, status=status.HTTP_201_CREATED)
 
             try:
                 num_doc, tipo, pdf_bytes, schedule_drive_upload = generate_combined_invoice_pdf_async(
@@ -299,9 +327,60 @@ class DocumentoViewSet(ModelViewSet):
 
         return Response(DocumentoSerializer(doc).data, status=status.HTTP_201_CREATED)
 
+    @action(detail=False, methods=["post"], url_path="confirmar")
+    def confirmar(self, request):
+        """"Aceptar y confirmar": body {ids: [...]}. Asigna los números
+        definitivos a documentos en cuarentena (uno o varios), correlativos y
+        en orden de creación. Todo o nada."""
+        from . import cuarentena
+
+        if request.user.role == "reception":
+            raise PermissionDenied("No tenés permiso para confirmar documentos.")
+        ids = request.data.get("ids") or []
+        if not isinstance(ids, list) or not ids:
+            return Response({"error": "ids es obligatorio."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            docs, finalizers = cuarentena.confirmar_documentos(
+                request.user.tenant, ids, scope_qs=self.get_queryset()
+            )
+        except cuarentena.CuarentenaError as e:
+            return Response({"error": str(e)}, status=status.HTTP_409_CONFLICT)
+        except ValueError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        for run in finalizers:   # tras el commit: Drive + Sheets
+            run()
+        return Response(DocumentoSerializer(docs, many=True).data)
+
+    @action(detail=False, methods=["post"], url_path="juntar")
+    def juntar(self, request):
+        """Junta documentos en cuarentena del mismo pagador (Bono Familia).
+        Body: {ids: [...], emisor_id: <opcional>}."""
+        from . import cuarentena
+
+        ids = request.data.get("ids") or []
+        docs = list(self.get_queryset().filter(id__in=ids))
+        if len(docs) != len(set(ids)):
+            return Response({"error": "Alguno de los documentos no existe."}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            keep = cuarentena.juntar_documentos(docs, emisor_id=request.data.get("emisor_id"))
+        except cuarentena.CuarentenaError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(DocumentoSerializer(keep).data)
+
     @action(detail=True, methods=["get"], url_path="descargar")
     def descargar(self, request, pk=None):
         doc = self.get_object()
+
+        # ── Cuarentena: sin PDF guardado, se renderiza con los datos actuales ──
+        if doc.estado == "cuarentena":
+            from . import cuarentena
+            try:
+                pdf_bytes = cuarentena.render_provisional_pdf(doc)
+            except ValueError as e:
+                return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            response = HttpResponse(pdf_bytes, content_type="application/pdf")
+            response["Content-Disposition"] = f'inline; filename="provisional-{doc.id}.pdf"'
+            return response
 
         # ── Locally stored PDF (primary — always available, independent of
         # Drive; every document generated since the pdf_data field was added
@@ -352,6 +431,11 @@ class DocumentoViewSet(ModelViewSet):
         """Manual send — email confirmation to the payer. Never automatic;
         staff clicks this once they've confirmed the invoice is correct."""
         doc = self.get_object()
+        if doc.estado == "cuarentena":
+            return Response(
+                {"error": "Este documento está en cuarentena: acéptalo y confírmalo antes de enviarlo."},
+                status=status.HTTP_409_CONFLICT,
+            )
         if not doc.is_issued:
             return Response({"error": "Confirmá la factura antes de enviarla."}, status=status.HTTP_400_BAD_REQUEST)
         ok, error = _send_document_email(doc)
@@ -360,9 +444,9 @@ class DocumentoViewSet(ModelViewSet):
         return Response({"ok": True})
 
     def destroy(self, request, *args, **kwargs):
-        if request.user.role == "reception":
-            raise PermissionDenied("No tenés permiso para eliminar documentos.")
         doc = self.get_object()
+        if request.user.role == "reception" and doc.estado != "cuarentena":
+            raise PermissionDenied("No tenés permiso para eliminar documentos.")
 
         if doc.is_issued:
             return Response(

@@ -121,7 +121,7 @@ class PagoViewSet(ModelViewSet):
     def get_queryset(self):
         qs = Pago.objects.filter(
             academia=self.request.user.tenant
-        ).select_related("pagador", "alumno", "grupo", "emisor")
+        ).select_related("pagador", "alumno", "grupo", "emisor").prefetch_related("documentos", "documentos_combinados")
         scope = marca_scope_for(self.request.user)
         if scope:
             qs = qs.filter(marca=scope)
@@ -208,11 +208,32 @@ class PagoViewSet(ModelViewSet):
                 omitidos.append({"alumno": alumno.nombre, "motivo": f"Sin emisor configurado para {alumno.marca}."})
                 continue
 
+            # Clases a mayores (CargoExtra) del mismo período: se suman como
+            # líneas de extras aparte, sin tocar la mensualidad fija — un
+            # alumno solo puede tener un Pago por período (ya_facturados,
+            # arriba), así que no hay riesgo de duplicarlas en un rerun.
+            year, month = periodo.split("-")
+            cargos_extra = alumno.cargos_extra.filter(fecha__year=year, fecha__month=month)
+            extras = [{"concepto": c.concepto, "importe": float(c.monto)} for c in cargos_extra]
+            extras_total = sum(c.monto for c in cargos_extra)
+
+            # The Ranger Express: tarifa plana mensual, línea propia junto a
+            # los CargoExtra — igual que ellos, no toca la mensualidad fija.
+            # Atribución de este ingreso a una profesora/marca concreta: no
+            # modelado (ver tarifas.pricing.cuota_ranger_express) — queda
+            # dentro del total de este Pago, bajo la marca del alumno, sin
+            # distinguir que es un servicio aparte de las clases.
+            if alumno.ranger_express:
+                extras.append({"concepto": "The Ranger Express", "importe": float(alumno.recogida_precio)})
+                extras_total += alumno.recogida_precio
+
+            total = grupo.tarifa + extras_total
+
             pago = Pago.objects.create(
                 academia=request.user.tenant, marca=alumno.marca, emisor=emisor,
                 alumno=alumno, pagador=alumno.pagador, grupo=grupo,
-                periodo=periodo, mensualidad=grupo.tarifa, descuento=0, extras=[],
-                total=grupo.tarifa, metodo=alumno.pagador.metodo if alumno.pagador else "",
+                periodo=periodo, mensualidad=grupo.tarifa, descuento=0, extras=extras,
+                total=total, metodo=alumno.pagador.metodo if alumno.pagador else "",
                 estado="pendiente", estado_carga="completo",
                 notas=f"Generado automáticamente para {periodo}." + (f" {omitidos_note}" if omitidos_note else ""),
             )
@@ -313,13 +334,11 @@ class PagoViewSet(ModelViewSet):
         was_pending = serializer.instance.estado_carga == "pendiente_completar"
         pago = serializer.save()
 
-        # An adult alumno who pays for themself (Alumno.es_adulto) may have no
-        # Pagador on file — generate_invoice_for_pago falls back to the
-        # alumno's own contact data in that case, so don't gate completion on
-        # pagador_id alone.
-        if was_pending and pago.alumno_id and (
-            pago.pagador_id or getattr(pago.alumno, "es_adulto", False)
-        ):
+        # Basta con el alumno: un adulto que paga él mismo, o un alumno sin
+        # datos del pagador (pagador "Otros", pago en mano), quedan sin
+        # Pagador — el documento sale con los datos del alumno (ver
+        # invoice_service._pagador_display_fields).
+        if was_pending and pago.alumno_id:
             if not pago.emisor_id:
                 pago.emisor = _resolve_emisor(self.request.user.tenant, self.request.data.get("emisor"), pago.marca)
             pago.estado_carga = "completo"
@@ -350,7 +369,7 @@ class PagoViewSet(ModelViewSet):
         # actually issued, no Drive/local file) is meant to be freely
         # discardable along with its draft Pago, so it's cleaned up
         # explicitly here rather than relying on cascade.
-        pago.documentos.filter(estado="borrador").delete()
+        pago.documentos.filter(estado__in=["borrador", "cuarentena"]).delete()
         return super().destroy(request, *args, **kwargs)
 
     @action(detail=True, methods=["post"], url_path="anular")

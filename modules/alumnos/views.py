@@ -124,17 +124,35 @@ class AlumnoViewSet(ContactableViaPagadorMixin, ModelViewSet):
         if pagador:
             qs = qs.filter(pagador_id=pagador)
         if search:
-            from django.db.models import Q
-            qs = qs.filter(
+            from django.db.models import F, Q, Value
+            from django.db.models.functions import Replace
+            search = search.strip()
+            filtro = (
                 Q(nombre__icontains=search) |
-                Q(pagador__nombre__icontains=search)
+                Q(pagador__nombre__icontains=search) |
+                Q(dni__icontains=search) |
+                Q(pagador__nif__icontains=search) |
+                Q(email__icontains=search) |
+                Q(pagador__email__icontains=search)
             )
+            # Teléfono: se compara sin espacios en ninguno de los dos lados.
+            digitos = search.replace(" ", "")
+            if digitos:
+                qs = qs.annotate(
+                    _tel=Replace(F("telefono"), Value(" "), Value("")),
+                    _tel_pagador=Replace(F("pagador__telefono"), Value(" "), Value("")),
+                )
+                filtro |= Q(_tel__icontains=digitos) | Q(_tel_pagador__icontains=digitos)
+            qs = qs.filter(filtro)
         if grupo:
             qs = qs.filter(grupos__id=grupo).distinct()
         if empresa:
             qs = qs.filter(empresa_id=empresa)
         if es_fundae is not None:
             qs = qs.filter(es_fundae=es_fundae.lower() == "true")
+        ranger_express = self.request.query_params.get("ranger_express")
+        if ranger_express is not None:
+            qs = qs.filter(ranger_express=ranger_express.lower() == "true")
         if tipo == "empresa":
             qs = qs.filter(empresa__isnull=False)
         elif tipo == "particular":
@@ -285,15 +303,22 @@ class AlumnoViewSet(ContactableViaPagadorMixin, ModelViewSet):
         deliberately never included here — they have their own gated/separate endpoints."""
         from modules.pagos.models import Pago
         from modules.pagos.serializers import PagoSerializer
+        from modules.tarifas.models import CargoExtra
+        from modules.tarifas.serializers import CargoExtraSerializer
+        from modules.tarifas.pricing import calcular_cuota_alumno
 
         alumno = self.get_object()
-        pagos = Pago.objects.filter(alumno=alumno).select_related("pagador", "grupo", "emisor", "tarifa")
+        pagos = Pago.objects.filter(alumno=alumno).select_related("pagador", "grupo", "emisor", "tarifa") \
+            .prefetch_related("documentos", "documentos_combinados")
         fechas = alumno.fechas_importantes.all()
         notas = alumno.notas_registro.select_related("autor").all()
+        cargos_extra = alumno.cargos_extra.all()
         return Response({
             "pagos": PagoSerializer(pagos, many=True, context={"request": request}).data,
             "fechas_importantes": FechaImportanteSerializer(fechas, many=True, context={"request": request}).data,
             "notas": NotaAlumnoSerializer(notas, many=True, context={"request": request}).data,
+            "cuota": calcular_cuota_alumno(alumno),
+            "cargos_extra": CargoExtraSerializer(cargos_extra, many=True, context={"request": request}).data,
         })
 
     @action(detail=True, methods=["post"], url_path="foto", parser_classes=[MultiPartParser])

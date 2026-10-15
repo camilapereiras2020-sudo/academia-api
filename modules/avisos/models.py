@@ -1,4 +1,5 @@
 from django.db import models
+from django.utils import timezone
 from django.contrib.auth import get_user_model
 
 User = get_user_model()
@@ -16,11 +17,42 @@ class Aviso(models.Model):
     para = models.ForeignKey(User, on_delete=models.CASCADE, related_name="avisos_recibidos", null=True, blank=True)
     titulo = models.CharField(max_length=200)
     fecha = models.DateField(null=True, blank=True)
+    # `hecha` = resuelto para todos (la conversación pasa a "Resueltos"); si
+    # alguien contesta, se reabre.
     hecha = models.BooleanField(default=False)
+    # Aviso para todo el equipo: un solo hilo compartido, no una copia por
+    # persona. `para` queda en null.
+    para_todos = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
+    # Última vez que se movió el hilo (creación o respuesta) y quién fue: con
+    # eso y AvisoLectura se sabe qué hilos tiene pendientes de leer cada una.
+    ultima_actividad = models.DateTimeField(default=timezone.now)
+    ultimo_autor = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
 
     class Meta:
         ordering = ["fecha", "-created_at"]
 
     def __str__(self):
         return self.titulo
+
+
+class AvisoMensaje(models.Model):
+    """Una respuesta dentro del hilo de un aviso. El aviso en sí es el primer
+    mensaje (su `titulo`); estas son las respuestas."""
+    aviso = models.ForeignKey(Aviso, on_delete=models.CASCADE, related_name="mensajes")
+    autor = models.ForeignKey(User, on_delete=models.CASCADE, related_name="avisos_mensajes")
+    texto = models.TextField(max_length=2000)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at", "id"]
+
+
+class AvisoLectura(models.Model):
+    """Hasta cuándo ha leído cada persona un hilo."""
+    aviso = models.ForeignKey(Aviso, on_delete=models.CASCADE, related_name="lecturas")
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="avisos_lecturas")
+    leido_hasta = models.DateTimeField()
+
+    class Meta:
+        unique_together = [("aviso", "user")]

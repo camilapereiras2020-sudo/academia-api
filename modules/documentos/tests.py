@@ -194,3 +194,35 @@ class CombinedInvoiceTests(TestCase):
         data = resp.json()
         self.assertEqual(data["pagos_adicionales"], [])
         self.assertEqual(data["pago_info"]["alumnos"], ["Hijo Uno"])
+
+
+class SinPagadorTests(TestCase):
+    """Alumnos de antes sin datos del pagador (pago en mano, "Otros" en el
+    frontend): el documento se emite igual, a nombre del alumno."""
+
+    def setUp(self):
+        self.user = User.objects.create_user(username="u2", email="u2@example.com", password="x")
+        self.emisor = Emisor.objects.create(
+            academia=self.user, slug="rangers", nombre="Rangers Academy",
+            autonoma="Cande", nif="X2", direccion="X", ciudad="X",
+            factura_prefix="RA", recibo_prefix="RR",
+        )
+        self.alumno = Alumno.objects.create(academia=self.user, nombre="Niña Sin Pagador", marca="rangers_academy")
+        self.pago = Pago.objects.create(
+            academia=self.user, marca="rangers_academy", emisor=self.emisor,
+            pagador=None, alumno=self.alumno, periodo="2026-10", fecha="2026-10-01",
+            mensualidad=95, descuento=0, extras=[], total=95,
+            metodo="efectivo", estado="pagado", estado_carga="completo",
+        )
+
+    def test_nombre_del_alumno_en_el_documento(self):
+        from modules.documentos.invoice_service import _pagador_display_fields
+        self.assertEqual(_pagador_display_fields(None, self.alumno), ("Niña Sin Pagador", "", "", ""))
+
+    def test_se_puede_generar_recibo_sin_pagador(self):
+        from modules.documentos.invoice_service import _prepare_invoice_pdf, generate_preview_pdf_bytes
+        self.assertTrue(generate_preview_pdf_bytes(self.pago).startswith(b"%PDF"))
+        num_doc, tipo_doc, pdf, _fecha, _emisor = _prepare_invoice_pdf(self.pago)
+        self.assertEqual(tipo_doc, "recibo")
+        self.assertTrue(num_doc)
+        self.assertTrue(pdf.startswith(b"%PDF"))

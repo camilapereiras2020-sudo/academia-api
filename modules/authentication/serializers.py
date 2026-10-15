@@ -26,13 +26,13 @@ class UserProfileSerializer(serializers.ModelSerializer):
     # academia_* fields describe the business (the tenant), not the individual
     # staff account — for a delegated account (co_manager/reception) these must
     # read/write the owner's row, not the logged-in user's own (blank) one.
-    ACADEMIA_FIELDS = ["academia_nombre", "academia_nif", "academia_dir", "academia_tel", "academia_logo"]
+    ACADEMIA_FIELDS = ["academia_nombre", "academia_nif", "academia_dir", "academia_tel", "academia_logo", "modo_cuarentena"]
 
     class Meta:
         model = User
         fields = [
             "id", "email", "username", "role", "marca_asignada",
-            "academia_nombre", "academia_nif", "academia_dir", "academia_tel", "academia_logo",
+            "academia_nombre", "academia_nif", "academia_dir", "academia_tel", "academia_logo", "modo_cuarentena",
         ]
         read_only_fields = ["id", "email", "role", "marca_asignada"]
 
@@ -45,6 +45,8 @@ class UserProfileSerializer(serializers.ModelSerializer):
         return data
 
     def update(self, instance, validated_data):
+        if "modo_cuarentena" in validated_data and instance.role == "reception":
+            raise serializers.ValidationError({"modo_cuarentena": "Reception no puede cambiar el modo cuarentena."})
         academia_data = {f: validated_data.pop(f) for f in self.ACADEMIA_FIELDS if f in validated_data}
         if academia_data:
             tenant = instance.tenant

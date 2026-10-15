@@ -25,6 +25,9 @@ class User(AbstractUser):
     academia_dir = models.CharField(max_length=300, blank=True)
     academia_tel = models.CharField(max_length=20, blank=True)
     academia_logo = models.CharField(max_length=500, blank=True)
+    # Modo cuarentena de facturación (tenant-level, like academia_*): while on,
+    # every new Documento is born "cuarentena" — provisional, no número.
+    modo_cuarentena = models.BooleanField(default=False)
     stripe_customer_id = models.CharField(max_length=100, blank=True)
     role = models.CharField(max_length=15, choices=ROLE_CHOICES, default="owner")
     academia_owner = models.ForeignKey(
