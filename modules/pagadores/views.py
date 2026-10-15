@@ -1,7 +1,7 @@
 from decimal import Decimal
 
 from django.utils import timezone
-from rest_framework import permissions
+from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.viewsets import ModelViewSet
@@ -30,6 +30,28 @@ class PagadorViewSet(ContactableViaPagadorMixin, ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(academia=self.request.user.tenant)
+
+    def destroy(self, request, *args, **kwargs):
+        """Borrar un pagador solo si no cuelga nada de él. Los pagos están
+        protegidos a nivel de base (PROTECT) y los alumnos quedarían sin
+        pagador en silencio (SET_NULL), así que en ambos casos se rechaza con
+        un mensaje claro en vez de un 500 o de dejar alumnos huérfanos."""
+        pagador = self.get_object()
+        n_pagos = pagador.pagos.count()
+        alumnos = list(pagador.alumnos.values_list("nombre", flat=True)[:5])
+        n_alumnos = pagador.alumnos.count()
+        if n_pagos or n_alumnos:
+            motivos = []
+            if n_alumnos:
+                nombres = ", ".join(alumnos) + ("…" if n_alumnos > len(alumnos) else "")
+                motivos.append(f"tiene {n_alumnos} alumno(s) asignado(s) ({nombres}): cámbiales el pagador antes")
+            if n_pagos:
+                motivos.append(f"tiene {n_pagos} pago(s) registrado(s)")
+            return Response(
+                {"error": f"No se puede eliminar a {pagador.nombre}: " + " y ".join(motivos) + "."},
+                status=status.HTTP_409_CONFLICT,
+            )
+        return super().destroy(request, *args, **kwargs)
 
 
 class PagadorCalculadoraView(APIView):
