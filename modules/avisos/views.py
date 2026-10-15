@@ -27,7 +27,13 @@ class AvisoViewSet(ModelViewSet):
     def get_queryset(self):
         user = self.request.user
         tenant_id = user.tenant.id
-        qs = Aviso.objects.filter(academia_id=tenant_id)
+        # Privacy rule: an aviso addressed to someone (`para` set) is a private
+        # message between its sender and its recipient — nobody else in the
+        # tenant sees it, even if it has a date. Only avisos with no `para`
+        # are shared with the whole team.
+        qs = Aviso.objects.filter(academia_id=tenant_id).filter(
+            Q(para__isnull=True) | Q(para_id=user.id) | Q(creado_por_id=user.id)
+        )
 
         if self.request.query_params.get("para_mi"):
             return qs.filter(para_id=user.id, hecha=False)
@@ -42,8 +48,8 @@ class AvisoViewSet(ModelViewSet):
                 qs = qs.filter(fecha__lte=hasta)
             return qs
 
-        # Default (no filter): everything relevant to this user — tasks on
-        # the shared calendar plus notes they sent or received.
+        # Default (no filter): shared calendar tasks plus notes they sent or
+        # received (qs is already limited to what this user may see).
         return qs.filter(
             Q(fecha__isnull=False) | Q(para_id=user.id) | Q(creado_por_id=user.id)
         )

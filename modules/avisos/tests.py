@@ -55,8 +55,8 @@ class AvisoViewSetTests(TestCase):
         titulos = [a["titulo"] for a in resp.json()]
         self.assertEqual(titulos, ["Para Sofia"])
 
-    def test_calendar_range_shows_tasks_from_the_whole_team_not_just_mine(self):
-        Aviso.objects.create(academia=self.owner, creado_por=self.owner, para=self.candela, titulo="Tarea Candela", fecha="2026-09-15")
+    def test_calendar_range_shows_unaddressed_tasks_to_the_whole_team(self):
+        Aviso.objects.create(academia=self.owner, creado_por=self.owner, para=self.candela, titulo="Privada Cami->Cande", fecha="2026-09-15")
         Aviso.objects.create(academia=self.owner, creado_por=self.candela, para=None, titulo="Tarea sin asignar", fecha="2026-09-16")
         Aviso.objects.create(academia=self.owner, creado_por=self.owner, para=self.candela, titulo="Nota sin fecha")
 
@@ -64,7 +64,36 @@ class AvisoViewSetTests(TestCase):
         resp = self.client.get("/api/v1/avisos/?desde=2026-09-01&hasta=2026-09-30")
         self.assertEqual(resp.status_code, 200)
         titulos = {a["titulo"] for a in resp.json()}
-        self.assertEqual(titulos, {"Tarea Candela", "Tarea sin asignar"})
+        self.assertEqual(titulos, {"Tarea sin asignar"})
+
+    def test_addressed_avisos_are_private_between_sender_and_recipient(self):
+        pares = [
+            (self.owner, self.sofia, "Cami->Sofi"),
+            (self.candela, self.sofia, "Cande->Sofi"),
+            (self.owner, self.candela, "Cami->Cande"),
+        ]
+        for de, para, titulo in pares:
+            Aviso.objects.create(academia=self.owner, creado_por=de, para=para, titulo=titulo)
+            Aviso.objects.create(academia=self.owner, creado_por=de, para=para, titulo=titulo + " (fecha)", fecha="2026-09-15")
+
+        esperado = {
+            self.owner: {"Cami->Sofi", "Cami->Sofi (fecha)", "Cami->Cande", "Cami->Cande (fecha)"},
+            self.candela: {"Cande->Sofi", "Cande->Sofi (fecha)", "Cami->Cande", "Cami->Cande (fecha)"},
+            self.sofia: {"Cami->Sofi", "Cami->Sofi (fecha)", "Cande->Sofi", "Cande->Sofi (fecha)"},
+        }
+        for user, titulos_ok in esperado.items():
+            self.client.force_authenticate(user)
+            # Default list
+            vistos = {a["titulo"] for a in self.client.get("/api/v1/avisos/").json()}
+            self.assertEqual(vistos, titulos_ok, f"default list for {user.username}")
+            # Calendar range
+            vistos = {a["titulo"] for a in self.client.get("/api/v1/avisos/?desde=2026-09-01&hasta=2026-09-30").json()}
+            self.assertEqual(vistos, {t for t in titulos_ok if "(fecha)" in t}, f"calendar for {user.username}")
+
+        # Direct access to someone else's private aviso is a 404.
+        privada = Aviso.objects.get(titulo="Cami->Sofi (fecha)")
+        self.client.force_authenticate(self.candela)
+        self.assertEqual(self.client.get(f"/api/v1/avisos/{privada.id}/").status_code, 404)
 
     def test_recipient_can_mark_a_note_as_read_but_a_bystander_cannot_edit_it(self):
         aviso = Aviso.objects.create(academia=self.owner, creado_por=self.owner, para=self.sofia, titulo="Para Sofia")
@@ -84,11 +113,12 @@ class AvisoViewSetTests(TestCase):
 
     def test_bystander_can_see_a_shared_calendar_task_but_not_edit_it(self):
         tarea = Aviso.objects.create(
-            academia=self.owner, creado_por=self.owner, para=self.candela,
-            titulo="Tarea Candela", fecha="2026-09-15",
+            academia=self.owner, creado_por=self.owner, para=None,
+            titulo="Tarea compartida", fecha="2026-09-15",
         )
-        # Sofia isn't the creator or the assignee, but a task (fecha set) is
-        # on the shared calendar, so she can see it — just not touch it.
+        # Sofia isn't the creator, but an unaddressed task (fecha set, no
+        # `para`) is on the shared calendar, so she can see it — just not
+        # touch it.
         self.client.force_authenticate(self.sofia)
         get_resp = self.client.get(f"/api/v1/avisos/{tarea.id}/")
         self.assertEqual(get_resp.status_code, 200)
