@@ -11,10 +11,19 @@ pago no tiene grupo, de los grupos del alumno — y solo si todos son de la
 misma profesora. Lo que no se pueda asignar con certeza queda aparte, en
 "SIN ASIGNAR", para revisarlo a mano: nunca se adivina.
 
+Dos modos:
+- (por defecto) lo REGISTRADO: pagos del período en estado "pagado".
+- --calculado: lo que CORRESPONDE cobrar según las tarifas, con la misma
+  cuenta que la ficha del alumno y la Calculadora de pagadores
+  (calcular_cuota_alumno: cuota manual > Bono Familia > tarifa de clase),
+  haya o no pagos cargados. Si un alumno tiene clases con las dos
+  profesoras, su cuota se reparte por horas (método de mayores restos, al
+  céntimo). Ranger Express va aparte: no se atribuye a ninguna profesora.
+
 Uso:
     python manage.py reparto_cobros
-    python manage.py reparto_cobros --periodo 2026-10
     python manage.py reparto_cobros --periodo 2026-10 --incluir-pendientes
+    python manage.py reparto_cobros --periodo 2026-10 --calculado
 """
 from collections import defaultdict
 from decimal import Decimal
@@ -76,6 +85,80 @@ def calcular_reparto(owner, periodo, solo_pagados=True):
     return dict(por_pagador), dict(totales)
 
 
+RANGER_EXPRESS = "RANGER EXPRESS (aparte)"
+
+
+def calcular_esperado(owner, periodo):
+    """Lo que corresponde cobrar según tarifas, por pagador y profesora.
+
+    Devuelve (por_pagador, totales, avisos, estados):
+      por_pagador: {pagador: [(alumno, profesora, importe), ...]}
+      totales: {profesora: Decimal}
+      avisos: [str] — alumnos sin cuota calculable (hay que mirarlos a mano)
+      estados: {pagador: "pagado" | "parcial" | "pendiente" | "sin_generar"}
+    """
+    from decimal import ROUND_HALF_UP
+    from modules.alumnos.models import Alumno
+    from modules.pagos.models import Pago
+    from modules.tarifas.pricing import calcular_cuota_alumno, reparto_bono_familia
+
+    alumnos = list(
+        Alumno.objects.filter(academia=owner, activo=True)
+        .select_related("pagador")
+        .prefetch_related("inscripciones__grupo__profesor", "pagador__alumnos")
+    )
+    pagos = defaultdict(list)
+    for pg in Pago.objects.filter(academia=owner, periodo=periodo):
+        pagos[pg.alumno_id].append(pg.estado)
+
+    por_pagador = defaultdict(list)
+    totales = defaultdict(lambda: Decimal("0"))
+    avisos = []
+    estados_por_pagador = defaultdict(list)
+
+    for a in alumnos:
+        pagador = a.pagador.nombre if a.pagador_id else "(sin pagador)"
+        if a.es_adulto:
+            avisos.append(f"{a.nombre}: adulto, se cobra por hora — calcular a mano.")
+            continue
+        info = calcular_cuota_alumno(a)
+        for av in info["avisos"]:
+            avisos.append(f"{a.nombre}: {av}")
+        estados_por_pagador[pagador].extend(pagos.get(a.id, []) or ["sin_generar"])
+
+        if info["cuota"] is not None:
+            cuota = Decimal(str(info["cuota"])).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            horas = defaultdict(int)
+            for i in a.inscripciones.all():
+                if i.grupo and i.grupo.profesor_id:
+                    horas[i.grupo.profesor.nombre] += len(i.grupo.horarios or []) or 1
+            if len(horas) == 1:
+                reparto = {next(iter(horas)): cuota}
+            elif len(horas) > 1:
+                reparto = reparto_bono_familia({k: Decimal(v) for k, v in horas.items()}, cuota)
+            else:
+                reparto = {SIN_ASIGNAR: cuota}
+            for profesora, importe in reparto.items():
+                por_pagador[pagador].append((a.nombre, profesora, importe))
+                totales[profesora] += importe
+        if info.get("ranger_express") is not None:
+            importe = Decimal(str(info["ranger_express"]))
+            por_pagador[pagador].append((a.nombre, RANGER_EXPRESS, importe))
+            totales[RANGER_EXPRESS] += importe
+
+    estados = {}
+    for pagador, lista in estados_por_pagador.items():
+        if all(e == "pagado" for e in lista):
+            estados[pagador] = "pagado"
+        elif any(e in ("pagado", "parcial") for e in lista):
+            estados[pagador] = "parcial"
+        elif all(e == "sin_generar" for e in lista):
+            estados[pagador] = "sin_generar"
+        else:
+            estados[pagador] = "pendiente"
+    return dict(por_pagador), dict(totales), avisos, estados
+
+
 class Command(BaseCommand):
     help = "Cobros del mes por pagador y reparto entre Cande y Cami."
 
@@ -84,6 +167,10 @@ class Command(BaseCommand):
         parser.add_argument(
             "--incluir-pendientes", action="store_true",
             help="Incluir también pagos pendientes/parciales (por defecto, solo los pagados).",
+        )
+        parser.add_argument(
+            "--calculado", action="store_true",
+            help="Usar lo que corresponde cobrar según tarifas, no solo lo registrado como pagado.",
         )
         parser.add_argument("--academia-email", default=None)
 
@@ -98,11 +185,15 @@ class Command(BaseCommand):
             return
 
         periodo = options["periodo"] or timezone.now().strftime("%Y-%m")
-        por_pagador, totales = calcular_reparto(
-            owner, periodo, solo_pagados=not options["incluir_pendientes"]
-        )
-
-        estado = "pagados y pendientes" if options["incluir_pendientes"] else "pagados"
+        avisos, estados = [], {}
+        if options["calculado"]:
+            por_pagador, totales, avisos, estados = calcular_esperado(owner, periodo)
+            estado = "calculado según tarifas"
+        else:
+            por_pagador, totales = calcular_reparto(
+                owner, periodo, solo_pagados=not options["incluir_pendientes"]
+            )
+            estado = "pagados y pendientes" if options["incluir_pendientes"] else "pagados"
         self.stdout.write(self.style.SUCCESS(f"\n=== Cobros de {periodo} ({estado}) ===\n"))
         if not por_pagador:
             self.stdout.write("No hay pagos para ese período.")
@@ -111,7 +202,8 @@ class Command(BaseCommand):
         for pagador in sorted(por_pagador):
             lineas = por_pagador[pagador]
             total_pagador = sum((imp for _, _, imp in lineas), Decimal("0"))
-            self.stdout.write(f"{pagador}  —  total {total_pagador:.2f} €")
+            marca_estado = f"  [{estados[pagador]}]" if pagador in estados else ""
+            self.stdout.write(f"{pagador}  —  total {total_pagador:.2f} €{marca_estado}")
             for alumno, profesora, importe in sorted(lineas):
                 self.stdout.write(f"    {alumno:35s} → {profesora:12s} {importe:>8.2f} €")
             self.stdout.write("")
@@ -126,6 +218,14 @@ class Command(BaseCommand):
         self.stdout.write(self.style.SUCCESS(
             f"Si todo se cobró en la cuenta de Cande → Cande le debe pasar a Cami: {a_cami:.2f} €"
         ))
+        for aviso in avisos:
+            self.stdout.write(self.style.WARNING(f"  ! {aviso}"))
+        if avisos:
+            self.stdout.write(f"({len(avisos)} aviso(s): esos alumnos NO están sumados arriba.)")
+        if RANGER_EXPRESS in totales:
+            self.stdout.write(
+                f"Ranger Express: {totales[RANGER_EXPRESS]:.2f} € van aparte (no sumados a Cami ni a Cande)."
+            )
         if SIN_ASIGNAR in totales:
             self.stdout.write(self.style.WARNING(
                 f"OJO: {totales[SIN_ASIGNAR]:.2f} € sin profesora clara (SIN ASIGNAR) — "
