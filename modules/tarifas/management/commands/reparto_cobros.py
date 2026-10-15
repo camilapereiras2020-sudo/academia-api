@@ -88,6 +88,22 @@ def calcular_reparto(owner, periodo, solo_pagados=True):
 RANGER_EXPRESS = "RANGER EXPRESS (aparte)"
 
 
+def _repartir_exacto(pesos, total):
+    """Reparte `total` en proporción a `pesos` ({clave: Decimal}) por el método
+    de mayores restos: trunca a céntimos y reparte los céntimos que faltan de
+    a uno, así la suma cuadra EXACTAMENTE con `total`."""
+    from decimal import ROUND_DOWN
+
+    cent = Decimal("0.01")
+    base = sum(pesos.values(), Decimal("0"))
+    exactos = {k: total * v / base for k, v in pesos.items()}
+    partes = {k: v.quantize(cent, rounding=ROUND_DOWN) for k, v in exactos.items()}
+    faltan = int(((total - sum(partes.values(), Decimal("0"))) / cent).to_integral_value())
+    for k in sorted(exactos, key=lambda k: exactos[k] - partes[k], reverse=True)[:faltan]:
+        partes[k] += cent
+    return partes
+
+
 def calcular_esperado(owner, periodo):
     """Lo que corresponde cobrar según tarifas, por pagador y profesora.
 
@@ -100,7 +116,7 @@ def calcular_esperado(owner, periodo):
     from decimal import ROUND_HALF_UP
     from modules.alumnos.models import Alumno
     from modules.pagos.models import Pago
-    from modules.tarifas.pricing import calcular_cuota_alumno, reparto_bono_familia
+    from modules.tarifas.pricing import calcular_cuota_alumno
 
     alumnos = list(
         Alumno.objects.filter(academia=owner, activo=True)
@@ -135,7 +151,7 @@ def calcular_esperado(owner, periodo):
             if len(horas) == 1:
                 reparto = {next(iter(horas)): cuota}
             elif len(horas) > 1:
-                reparto = reparto_bono_familia({k: Decimal(v) for k, v in horas.items()}, cuota)
+                reparto = _repartir_exacto({k: Decimal(v) for k, v in horas.items()}, cuota)
             else:
                 reparto = {SIN_ASIGNAR: cuota}
             for profesora, importe in reparto.items():
