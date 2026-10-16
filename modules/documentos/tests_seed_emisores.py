@@ -56,23 +56,14 @@ class SeedEmisoresTests(TestCase):
         self.assertEqual((e.factura_counter, e.factura_counter_year, e.drive_folder_id), (57, 2026, "MI_CARPETA"))
 
 
-    def test_serie_nueva_de_recibos_de_cami_reinicia_el_contador_solo_una_vez(self):
+    def test_la_numeracion_de_enero_empieza_de_cero_sin_tocar_el_ano_en_curso(self):
         self.seed()
-        # estado previo al cambio: serie RE con contador en marcha
         Emisor.objects.filter(slug="camiandco").update(
-            recibo_prefix="RE", recibo_baseline=236, recibo_counter=250, recibo_counter_year=2026,
+            factura_baseline=236, recibo_baseline=236, factura_counter=250, factura_counter_year=2026,
+            recibo_counter=240, recibo_counter_year=2026,
         )
-        self.seed()   # despliegue con la serie nueva
+        self.seed()
         e = Emisor.objects.get(slug="camiandco")
-        self.assertEqual((e.recibo_prefix, e.recibo_baseline, e.recibo_counter), ("RC", 0, 0))
-        e.recibo_counter, e.recibo_counter_year = 7, 2026
-        e.save()
-        self.seed()   # otro despliegue: el contador NO se vuelve a reiniciar
-        self.assertEqual(Emisor.objects.get(slug="camiandco").recibo_counter, 7)
-
-    def test_rangers_conserva_su_serie_rr(self):
-        self.seed()
-        Emisor.objects.filter(slug="rangers").update(recibo_counter=40, recibo_counter_year=2026)
-        self.seed()
-        e = Emisor.objects.get(slug="rangers")
-        self.assertEqual((e.recibo_prefix, e.recibo_counter), ("RR", 40))
+        self.assertEqual((e.factura_baseline, e.recibo_baseline), (0, 0))
+        self.assertEqual((e.factura_counter, e.recibo_counter), (250, 240))   # 2026 sigue donde estaba
+        self.assertEqual((e.recibo_prefix, Emisor.objects.get(slug="rangers").recibo_prefix), ("RE", "RR"))

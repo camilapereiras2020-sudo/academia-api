@@ -13,8 +13,11 @@ CAMIANDCO = dict(
     telefono         = "698183419",
     iban             = "ES10 2080 5020 0530 4003 9725",
     factura_prefix   = "CC",
-    recibo_prefix    = "RC",   # serie nueva de recibos (antes "RE", hasta 236 en 2026)
-    factura_baseline = 236,
+    recibo_prefix    = "RE",
+    # Cada enero el contador vuelve a su baseline: 0 = la numeración empieza de
+    # cero en enero (antes 236, que era el punto de partida de 2026). No afecta al
+    # año en curso: el contador de 2026 sigue donde está.
+    factura_baseline = 0,
     recibo_baseline  = 0,
     recibo_efectivo_suffix   = "C",
     recibo_efectivo_baseline = 199,
@@ -69,7 +72,6 @@ class Command(BaseCommand):
                 # Update the structural fields (prefixes, baselines, activo…) always;
                 # the editable ones only when empty; never an existing drive_folder_id.
                 changed = []
-                prefijo_recibo_antes = emisor.recibo_prefix
                 for field, val in data.items():
                     if field == "drive_folder_id" and emisor.drive_folder_id:
                         continue  # never overwrite a folder ID that's already set
@@ -78,13 +80,6 @@ class Command(BaseCommand):
                     if getattr(emisor, field) != val:
                         setattr(emisor, field, val)
                         changed.append(field)
-                if "recibo_prefix" in changed and prefijo_recibo_antes != emisor.recibo_prefix:
-                    # Serie nueva de recibos: el contador vuelve a empezar (solo cuando
-                    # el prefijo cambia, nunca en despliegues posteriores) — así la
-                    # numeración nueva arranca en 1 y no continúa la de la serie anterior.
-                    emisor.recibo_counter = 0
-                    emisor.recibo_counter_year = None
-                    changed += ["recibo_counter", "recibo_counter_year"]
                 if changed:
                     emisor.save(update_fields=changed)
                     self.stdout.write(self.style.SUCCESS(
