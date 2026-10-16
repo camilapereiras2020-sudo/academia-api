@@ -165,15 +165,31 @@ class CuarentenaTests(TestCase):
             sorted(Documento.objects.values_list("num_doc", flat=True)), ["CC1-26", "CC2-26"]
         )
 
-    def test_reception_no_confirma_pero_si_elimina_cuarentena(self, m_up, m_log):
-        self.activar()
-        d = self.generar(self.pago("A")).json()
+    def recepcion(self):
         rec = User.objects.create_user(
             username="rec", email="r@example.com", password="x", role="reception", academia_owner=self.user,
         )
         c = APIClient(); c.force_authenticate(rec)
-        self.assertEqual(c.post("/api/v1/documentos/confirmar/", {"ids": [d["id"]]}, format="json").status_code, 403)
-        self.assertEqual(c.delete(f"/api/v1/documentos/{d['id']}/").status_code, 204)
+        return c
+
+    def test_recepcion_puede_confirmar_y_eliminar_cuarentena(self, m_up, m_log):
+        self.activar()
+        a = self.generar(self.pago("A")).json()
+        b = self.generar(self.pago("B")).json()
+        c = self.recepcion()
+        r = c.post("/api/v1/documentos/confirmar/", {"ids": [a["id"]]}, format="json")
+        self.assertEqual(r.status_code, 200, r.content)
+        self.assertEqual(r.json()[0]["num_doc"], "CC1-26")
+        self.assertEqual(c.delete(f"/api/v1/documentos/{b['id']}/").status_code, 204)
+
+    def test_recepcion_no_borra_ni_anula_un_documento_confirmado(self, m_up, m_log):
+        self.activar()
+        d = self.generar(self.pago("A")).json()
+        self.assertEqual(self.confirmar([d["id"]]).status_code, 200)
+        c = self.recepcion()
+        self.assertEqual(c.delete(f"/api/v1/documentos/{d['id']}/").status_code, 403)
+        r = c.post(f"/api/v1/documentos/{d['id']}/anular/", {"motivo_anulacion": "x"}, format="json")
+        self.assertEqual(r.status_code, 403)
 
     # ── juntar (Bono Familia) ───────────────────────────────────────────
     def test_juntar_mismo_pagador_y_confirmar_un_solo_numero(self, m_up, m_log):

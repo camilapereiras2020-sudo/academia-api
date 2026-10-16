@@ -334,8 +334,8 @@ class DocumentoViewSet(ModelViewSet):
         en orden de creación. Todo o nada."""
         from . import cuarentena
 
-        if request.user.role == "reception":
-            raise PermissionDenied("No tenés permiso para confirmar documentos.")
+        # Recepción también confirma (decisión 2026-10): anular sigue siendo
+        # solo de owner/co_manager, y un documento ya emitido no se borra.
         ids = request.data.get("ids") or []
         if not isinstance(ids, list) or not ids:
             return Response({"error": "ids es obligatorio."}, status=status.HTTP_400_BAD_REQUEST)
