@@ -72,7 +72,31 @@ class SesionViewSet(ModelViewSet):
             return Response({"error": "Alumno no encontrado."}, status=404)
 
         sesion, _ = Sesion.objects.get_or_create(academia=tenant, grupo=grupo, fecha=fecha)
+        # Invitado/recuperación: el alumno no está inscrito en este grupo.
+        es_invitado = not alumno.inscripciones.filter(grupo=grupo).exists()
         registro, _ = RegistroAsistencia.objects.update_or_create(
-            sesion=sesion, alumno=alumno, defaults={"estado": estado, "nota": nota}
+            sesion=sesion, alumno=alumno, defaults={"estado": estado, "nota": nota, "es_invitado": es_invitado}
         )
         return Response(RegistroSerializer(registro).data)
+
+    @action(detail=False, methods=["post"], url_path="quitar")
+    def quitar(self, request):
+        """Quita de una clase a un alumno invitado/recuperación añadido por
+        error. Solo registros de alumnos que no están inscritos en el grupo:
+        a los alumnos de la clase se les marca ausente, no se les quita."""
+        tenant = request.user.tenant
+        grupo_id, fecha, alumno_id = (request.data.get(k) for k in ("grupo", "fecha", "alumno"))
+        if not (grupo_id and fecha and alumno_id):
+            return Response({"error": "grupo, fecha y alumno son obligatorios."}, status=400)
+        registro = RegistroAsistencia.objects.filter(
+            sesion__academia=tenant, sesion__grupo_id=grupo_id, sesion__fecha=fecha, alumno_id=alumno_id,
+        ).select_related("sesion__grupo").first()
+        if not registro:
+            return Response({"error": "Registro no encontrado."}, status=404)
+        scope = marca_scope_for(request.user)
+        if scope and registro.sesion.grupo.marca != scope:
+            return Response({"error": "Sin permiso sobre esta marca."}, status=403)
+        if registro.alumno.inscripciones.filter(grupo_id=grupo_id).exists():
+            return Response({"error": "Es alumno de esta clase: márcalo ausente en vez de quitarlo."}, status=400)
+        registro.delete()
+        return Response(status=204)
