@@ -646,3 +646,57 @@ class GenerarMesTests(TestCase):
         self.client.force_authenticate(reception)
         resp = self.client.post("/api/v1/pagos/generar-mes/", {"periodo": "2026-09"}, format="json")
         self.assertEqual(resp.status_code, 403)
+
+
+class PagoDocumentoEnCuarentenaTests(TestCase):
+    """El pago expone si su documento está en cuarentena (provisional)."""
+
+    def setUp(self):
+        from modules.documentos.models import Documento, Emisor
+        self.user = User.objects.create_user(username="owner", email="o@example.com", password="x")
+        self.client = APIClient()
+        self.client.force_authenticate(self.user)
+        emisor = Emisor.objects.create(
+            academia=self.user, slug="camiandco", nombre="Cami&Co", autonoma="C", nif="X1",
+            direccion="X", ciudad="X",
+        )
+        pagador = Pagador.objects.create(academia=self.user, nombre="Mamá")
+        alumno = Alumno.objects.create(academia=self.user, nombre="Hijo", marca="cami_and_co", pagador=pagador)
+        self.pago = Pago.objects.create(
+            academia=self.user, marca="cami_and_co", emisor=emisor, pagador=pagador, alumno=alumno,
+            periodo="2026-10", fecha="2026-10-01", mensualidad=80, descuento=0, extras=[], total=80,
+            metodo="transferencia", estado="pagado", estado_carga="completo",
+        )
+        self.Documento = Documento
+
+    def flag(self):
+        return self.client.get(f"/api/v1/pagos/{self.pago.id}/").json()["documento_en_cuarentena"]
+
+    def test_sin_documento_no_esta_en_cuarentena(self):
+        self.assertFalse(self.flag())
+
+    def test_documento_en_cuarentena(self):
+        self.Documento.objects.create(
+            academia=self.user, pago=self.pago, tipo="factura", nombre="provisional.pdf", estado="cuarentena",
+        )
+        self.assertTrue(self.flag())
+
+    def test_documento_emitido_ya_no_esta_en_cuarentena(self):
+        self.Documento.objects.create(
+            academia=self.user, pago=self.pago, tipo="factura", nombre="CC1-26.pdf",
+            num_doc="CC1-26", estado="emitida",
+        )
+        self.assertFalse(self.flag())
+
+    def test_pago_secundario_de_un_combinado_en_cuarentena(self):
+        otro = Pago.objects.create(
+            academia=self.user, marca="cami_and_co", emisor=self.pago.emisor, pagador=self.pago.pagador,
+            alumno=Alumno.objects.create(academia=self.user, nombre="Hijo 2", marca="cami_and_co", pagador=self.pago.pagador),
+            periodo="2026-10", fecha="2026-10-01", mensualidad=80, descuento=0, extras=[], total=80,
+            metodo="transferencia", estado="pagado", estado_carga="completo",
+        )
+        doc = self.Documento.objects.create(
+            academia=self.user, pago=self.pago, tipo="factura", nombre="provisional.pdf", estado="cuarentena",
+        )
+        doc.pagos_adicionales.set([otro])
+        self.assertTrue(self.client.get(f"/api/v1/pagos/{otro.id}/").json()["documento_en_cuarentena"])

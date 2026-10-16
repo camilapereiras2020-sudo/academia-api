@@ -27,6 +27,9 @@ class PagoSerializer(TenantScopedFKMixin, serializers.ModelSerializer):
     # money received, but its paperwork is currently invalid, so consumers
     # that total up "income" (Dashboard) should exclude it until re-issued.
     documento_anulado = serializers.SerializerMethodField()
+    # Modo cuarentena: el pago ya tiene su documento, pero provisional (sin número,
+    # sin enviar) hasta que se confirma en Documentos.
+    documento_en_cuarentena = serializers.SerializerMethodField()
 
     class Meta:
         model  = Pago
@@ -38,12 +41,19 @@ class PagoSerializer(TenantScopedFKMixin, serializers.ModelSerializer):
             "metodo", "estado", "fecha", "horas_trabajadas", "notas",
             "num_doc", "serie_id", "iban", "stripe_payment_intent", "created_at",
             "estado_carga", "numero_factura_reservado", "concepto_original", "concepto_libre",
-            "documento_anulado",
+            "documento_anulado", "documento_en_cuarentena",
         ]
         read_only_fields = [
             "id", "created_at", "num_doc", "serie_id", "emisor", "emisor_nombre", "tarifa_nombre",
             "estado_carga", "numero_factura_reservado", "concepto_original", "documento_anulado",
+            "documento_en_cuarentena",
         ]
+
+    def get_documento_en_cuarentena(self, obj):
+        # Mismo criterio que documento_anulado: el documento propio o, si el
+        # pago va dentro de una factura combinada, el del pago principal.
+        documentos = list(obj.documentos.all()) or list(obj.documentos_combinados.all())
+        return any(d.estado == "cuarentena" for d in documentos)
 
     def get_documento_anulado(self, obj):
         # Un pago "secundario" de una factura combinada (Bono Familia entre
@@ -76,6 +86,6 @@ class PagoReceptionSerializer(PagoSerializer):
     class Meta(PagoSerializer.Meta):
         fields = [
             "id", "marca", "marca_display", "pagador_nombre", "alumno_nombre",
-            "grupo_nombre", "periodo", "estado", "num_doc",
+            "grupo_nombre", "periodo", "estado", "num_doc", "documento_en_cuarentena",
         ]
         read_only_fields = fields
