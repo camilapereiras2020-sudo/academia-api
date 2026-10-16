@@ -54,3 +54,25 @@ class SeedEmisoresTests(TestCase):
         self.seed()
         e = Emisor.objects.get(slug="camiandco")
         self.assertEqual((e.factura_counter, e.factura_counter_year, e.drive_folder_id), (57, 2026, "MI_CARPETA"))
+
+
+    def test_serie_nueva_de_recibos_de_cami_reinicia_el_contador_solo_una_vez(self):
+        self.seed()
+        # estado previo al cambio: serie RE con contador en marcha
+        Emisor.objects.filter(slug="camiandco").update(
+            recibo_prefix="RE", recibo_baseline=236, recibo_counter=250, recibo_counter_year=2026,
+        )
+        self.seed()   # despliegue con la serie nueva
+        e = Emisor.objects.get(slug="camiandco")
+        self.assertEqual((e.recibo_prefix, e.recibo_baseline, e.recibo_counter), ("RC", 0, 0))
+        e.recibo_counter, e.recibo_counter_year = 7, 2026
+        e.save()
+        self.seed()   # otro despliegue: el contador NO se vuelve a reiniciar
+        self.assertEqual(Emisor.objects.get(slug="camiandco").recibo_counter, 7)
+
+    def test_rangers_conserva_su_serie_rr(self):
+        self.seed()
+        Emisor.objects.filter(slug="rangers").update(recibo_counter=40, recibo_counter_year=2026)
+        self.seed()
+        e = Emisor.objects.get(slug="rangers")
+        self.assertEqual((e.recibo_prefix, e.recibo_counter), ("RR", 40))

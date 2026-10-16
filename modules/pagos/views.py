@@ -321,13 +321,10 @@ class PagoViewSet(ModelViewSet):
             pago.save(update_fields=["estado_carga"])
             return
 
-        # Invoicing is never automatic (2026-09 redesign): a pago is created
-        # "completo" but un-invoiced — no num_doc, no PDF, no email — until
-        # staff explicitly confirms it (DocumentoViewSet.generar/generar_combinado).
-        # While the platform's still being tested, an auto-assigned number on
-        # a pago that turns out to have a mistake would need a formal anulación
-        # to correct; a draft that was never confirmed just gets fixed and
-        # confirmed once it's right.
+        # Recibo automático: un pago registrado como cobrado crea su recibo
+        # provisional (en cuarentena). La factura no es automática.
+        from modules.documentos.auto_recibo import asegurar_recibo
+        asegurar_recibo(pago)
 
     def perform_update(self, serializer):
         scope = marca_scope_for(self.request.user)
@@ -347,9 +344,10 @@ class PagoViewSet(ModelViewSet):
                 pago.emisor = _resolve_emisor(self.request.user.tenant, self.request.data.get("emisor"), pago.marca)
             pago.estado_carga = "completo"
             pago.save(update_fields=["estado_carga", "emisor"])
-            # Completing a draft no longer auto-invoices either — see
-            # perform_create's comment. Staff confirms explicitly once it's
-            # been reviewed, same as any other completo, un-invoiced pago.
+        # Si el pago está cobrado y aún no tiene recibo (recién completado, o
+        # cambiado a "pagado" al editarlo), se crea su recibo provisional.
+        from modules.documentos.auto_recibo import asegurar_recibo
+        asegurar_recibo(pago)
 
     def destroy(self, request, *args, **kwargs):
         pago = self.get_object()
@@ -389,6 +387,13 @@ class PagoViewSet(ModelViewSet):
         # actually issued, no Drive/local file) is meant to be freely
         # discardable along with its draft Pago, so it's cleaned up
         # explicitly here rather than relying on cascade.
+        # Un pago que forma parte de un recibo combinado todavía provisional tampoco
+        # se borra a ciegas: se quedaría fuera del documento sin avisar.
+        if pago.documentos_combinados.filter(estado="cuarentena").exists():
+            return Response(
+                {"error": "Este pago forma parte de un recibo combinado provisional: elimina antes ese recibo en Documentos."},
+                status=status.HTTP_409_CONFLICT,
+            )
         pago.documentos.filter(estado__in=["borrador", "cuarentena"]).delete()
         return super().destroy(request, *args, **kwargs)
 
@@ -455,6 +460,9 @@ class PagoViewSet(ModelViewSet):
         pago.borrado_por = None
         pago.save(update_fields=["estado", "anulado_at", "motivo_anulacion", "anulado_por",
                                  "borrado_at", "borrado_por"])
+        if cobrado:
+            from modules.documentos.auto_recibo import asegurar_recibo
+            asegurar_recibo(pago)
         return Response(PagoSerializer(pago).data)
 
     @action(detail=True, methods=["post"], url_path="marcar-pagado")
@@ -466,6 +474,8 @@ class PagoViewSet(ModelViewSet):
         pago.estado = "pagado"
         pago.fecha  = timezone.now().date()
         pago.save(update_fields=["estado", "fecha"])
+        from modules.documentos.auto_recibo import asegurar_recibo
+        asegurar_recibo(pago)
         return Response(PagoSerializer(pago).data)
 
     @action(detail=True, methods=["post"], url_path="stripe-intent")

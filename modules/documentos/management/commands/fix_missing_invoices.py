@@ -78,7 +78,9 @@ class Command(BaseCommand):
                 skipped += 1
                 continue
 
-            en_cuarentena = pago.academia.modo_cuarentena
+            # Flujo recibo→factura: todo documento nace provisional (recibo); nunca se emite
+            # un número desde un comando de mantenimiento.
+            en_cuarentena = True
 
             # La cuarentena no sube nada a Drive, así que no necesita carpeta.
             if not en_cuarentena and not emisor.drive_folder_id:

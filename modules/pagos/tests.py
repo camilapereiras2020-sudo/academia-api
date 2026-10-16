@@ -238,7 +238,9 @@ class DraftCompletionFlowTests(TestCase):
         self.assertEqual(self.draft.alumno_id, self.alumno.id)
         self.assertEqual(self.draft.pagador_id, self.pagador.id)
         self.assertEqual(self.draft.num_doc, "")
-        self.assertFalse(self.draft.documentos.exists())
+        # Un pago cobrado, ya completo, tiene su recibo provisional: sin número hasta confirmarlo.
+        recibo = self.draft.documentos.get()
+        self.assertEqual((recibo.estado, recibo.tipo, recibo.num_doc), ("cuarentena", "recibo", ""))
 
     def test_patch_completes_draft_without_pagador_otros(self):
         """Pagador "Otros" (sin datos, pago en mano): el borrador se completa
@@ -281,10 +283,11 @@ class DraftCompletionFlowTests(TestCase):
         self.assertIsNone(pago.pagador_id)
         self.assertEqual(pago.estado_carga, "completo")
         self.assertEqual(pago.num_doc, "")
-        self.assertFalse(pago.documentos.exists())
+        recibo = pago.documentos.get()   # recibo automático, provisional
+        self.assertEqual((recibo.estado, recibo.tipo), ("cuarentena", "recibo"))
 
-        gen = self.client.post("/api/v1/documentos/generar/", {"pago_id": pago.id}, format="json")
-        self.assertEqual(gen.status_code, 201, gen.content)
+        conf = self.client.post("/api/v1/documentos/confirmar/", {"ids": [recibo.id]}, format="json")
+        self.assertEqual(conf.status_code, 200, conf.content)
         pago.refresh_from_db()
         self.assertNotEqual(pago.num_doc, "")
         self.assertTrue(pago.documentos.filter(estado="emitida").exists())
@@ -306,7 +309,7 @@ class DraftCompletionFlowTests(TestCase):
         self.assertIsNone(pago.pagador_id)
         self.assertEqual(pago.num_doc, "")
         self.assertNotIn("Factura no generada", pago.notas or "")
-        self.assertFalse(pago.documentos.exists())
+        self.assertEqual(pago.documentos.get().estado, "cuarentena")   # recibo provisional, sin número
 
     def test_patch_without_alumno_pagador_stays_pending(self):
         resp = self.client.patch(
@@ -404,7 +407,7 @@ class DraftCompletionFlowTests(TestCase):
     @patch.dict(os.environ, {"EMAIL_SENDING_ENABLED": "true"})
     @patch("modules.documentos.sheets_log.log_emision")
     @patch("resend.Emails.send")
-    @patch("modules.documentos.invoice_service.upload_to_drive")
+    @patch("modules.documentos.cuarentena.upload_to_drive")
     def test_full_pipeline_end_to_end_with_mocked_external_calls(self, mock_upload, mock_resend_send, mock_log_emision):
         """Create -> appear in batch review -> complete via the exact same PATCH
         the review screen's Save button issues -> stays un-invoiced (2026-09
@@ -461,18 +464,29 @@ class DraftCompletionFlowTests(TestCase):
         mock_upload.assert_not_called()
         mock_resend_send.assert_not_called()
 
-        # 4) staff explicitly confirms -- this is the only thing that ever
-        # assigns a número and renders/stores the real PDF
-        generar_resp = self.client.post("/api/v1/documentos/generar/", {"pago_id": draft.id}, format="json")
-        self.assertEqual(generar_resp.status_code, 201, generar_resp.content)
-        documento_id = generar_resp.json()["id"]
+        # 4) mientras no esté cobrado no hay documento; al marcarlo cobrado se crea
+        # su recibo provisional. Staff lo confirma -- eso es lo único que asigna
+        # número y guarda el PDF real
+        self.assertFalse(draft.documentos.exists())
+        self.assertEqual(
+            self.client.patch(f"/api/v1/pagos/{draft_id}/", {"estado": "pagado"}, format="json").status_code, 200
+        )
+        documento = draft.documentos.get()
+        self.assertEqual((documento.estado, documento.tipo), ("cuarentena", "recibo"))
+        mock_upload.assert_not_called()
+        conf = self.client.post("/api/v1/documentos/confirmar/", {"ids": [documento.id]}, format="json")
+        self.assertEqual(conf.status_code, 200, conf.content)
+        documento_id = documento.id
 
         draft.refresh_from_db()
-        self.assertTrue(draft.num_doc.startswith("CC"))
-        self.assertNotEqual(draft.num_doc, "")
+        self.assertTrue(draft.num_doc.startswith("RE"))
 
-        # 5) inspect exactly what would have gone to Drive -- confirming does
-        # upload, it just never emails on its own
+        # 5) inspect exactly what would have gone to Drive (subida en segundo plano)
+        import time
+        for _ in range(40):
+            if mock_upload.called:
+                break
+            time.sleep(0.05)
         mock_upload.assert_called_once()
         pdf_bytes, filename, year, month, folder_id = mock_upload.call_args[0][:5]
         self.assertTrue(pdf_bytes[:4] == b"%PDF")   # a real PDF was actually built

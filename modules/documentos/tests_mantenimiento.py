@@ -42,14 +42,14 @@ class FixMissingInvoicesTests(TestCase):
         self.user.modo_cuarentena = True
         self.user.save()
 
-    @patch("modules.documentos.management.commands.fix_missing_invoices.generate_invoice_for_pago",
-           return_value=("CC1-26", "DRIVE_ID", "factura"))
-    def test_modo_apagado_emite_como_siempre(self, gen):
+    @patch("modules.documentos.management.commands.fix_missing_invoices.generate_invoice_for_pago")
+    def test_con_el_modo_apagado_tambien_va_a_cuarentena_nunca_emite_numero(self, gen):
+        # Flujo recibo→factura: un comando de mantenimiento no emite números directos.
         p = self.pago()
         self.correr()
-        gen.assert_called_once()
+        gen.assert_not_called()
         d = Documento.objects.get(pago=p)
-        self.assertEqual((d.estado, d.num_doc, d.s3_key), ("emitida", "CC1-26", "DRIVE_ID"))
+        self.assertEqual((d.estado, d.num_doc, d.s3_key), ("cuarentena", "", ""))
 
     @patch("modules.documentos.management.commands.fix_missing_invoices.generate_invoice_for_pago")
     def test_modo_activo_crea_documento_en_cuarentena_sin_numero_ni_drive(self, gen):

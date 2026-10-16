@@ -67,7 +67,7 @@ class CuarentenaTests(TestCase):
         m_up.assert_not_called()
         m_log.assert_not_called()
         self.cami.refresh_from_db()
-        self.assertEqual(self.cami.factura_counter, 0)
+        self.assertEqual(self.cami.recibo_counter, 0)
         # el PDF provisional se renderiza al vuelo
         pdf = self.client.get(d["download_url"].replace("/api/v1", "/api/v1"))
         self.assertEqual(pdf.status_code, 200)
@@ -80,21 +80,19 @@ class CuarentenaTests(TestCase):
         self.assertEqual(a["id"], b["id"])
         self.assertEqual(Documento.objects.count(), 1)
 
-    def test_modo_apagado_comportamiento_de_hoy(self, m_up, m_log):
-        with patch("modules.documentos.invoice_service.upload_to_drive", return_value="D"):
-            r = self.generar(self.pago("A"))
+    def test_con_el_modo_apagado_tambien_nace_en_cuarentena_como_recibo(self, m_up, m_log):
+        # Desde el flujo recibo→factura todo documento nace provisional y es un recibo.
+        r = self.generar(self.pago("A", "transferencia"))
         self.assertEqual(r.status_code, 201, r.content)
-        self.assertEqual(r.json()["estado"], "emitida")
-        self.assertEqual(r.json()["num_doc"], "CC1-26")
+        self.assertEqual((r.json()["estado"], r.json()["tipo"], r.json()["num_doc"]), ("cuarentena", "recibo", ""))
 
-    def test_documentos_previos_no_entran_en_cuarentena(self, m_up, m_log):
+    def test_documentos_confirmados_no_se_duplican(self, m_up, m_log):
         p = self.pago("A")
-        with patch("modules.documentos.invoice_service.upload_to_drive", return_value="D"):
-            emitido = self.generar(p).json()
-        self.activar()
+        d = self.generar(p).json()
+        self.assertEqual(self.confirmar([d["id"]]).status_code, 200)
         again = self.generar(p)
         self.assertEqual(again.status_code, 200)
-        self.assertEqual(again.json()["id"], emitido["id"])
+        self.assertEqual(again.json()["id"], d["id"])
         self.assertEqual(again.json()["estado"], "emitida")
 
     # ── eliminar / enviar ───────────────────────────────────────────────
@@ -120,11 +118,11 @@ class CuarentenaTests(TestCase):
         r = self.confirmar([ids[2], ids[0]])  # orden de petición irrelevante
         self.assertEqual(r.status_code, 200, r.content)
         nums = {Documento.objects.get(pk=i).num_doc for i in (ids[0], ids[2])}
-        self.assertEqual(Documento.objects.get(pk=ids[0]).num_doc, "CC1-26")
-        self.assertEqual(Documento.objects.get(pk=ids[2]).num_doc, "CC2-26")
-        self.assertEqual(nums, {"CC1-26", "CC2-26"})
+        self.assertEqual(Documento.objects.get(pk=ids[0]).num_doc, "RE1-26")
+        self.assertEqual(Documento.objects.get(pk=ids[2]).num_doc, "RE2-26")
+        self.assertEqual(nums, {"RE1-26", "RE2-26"})
         self.cami.refresh_from_db()
-        self.assertEqual(self.cami.factura_counter, 2)
+        self.assertEqual(self.cami.recibo_counter, 2)
 
     def test_reglas_de_numeracion_por_metodo_y_emisor(self, m_up, m_log):
         self.activar()
@@ -137,7 +135,7 @@ class CuarentenaTests(TestCase):
         self.assertEqual(self.confirmar(ids).status_code, 200)
         got = [Documento.objects.get(pk=i) for i in ids]
         self.assertEqual([(d.tipo, d.num_doc) for d in got], [
-            ("factura", "CC1-26"), ("recibo", "RE1-26"), ("recibo", "RE2-26"), ("factura", "RA1-26"),
+            ("recibo", "RE1-26"), ("recibo", "RE2-26"), ("recibo", "RE3-26"), ("recibo", "RR1-26"),
         ])
         for d in got:
             self.assertEqual((d.estado, d.pago.num_doc), ("emitida", d.num_doc))
@@ -149,7 +147,7 @@ class CuarentenaTests(TestCase):
         self.assertEqual(self.confirmar([d["id"]]).status_code, 200)
         self.assertEqual(self.confirmar([d["id"]]).status_code, 409)
         self.cami.refresh_from_db()
-        self.assertEqual(self.cami.factura_counter, 1)
+        self.assertEqual(self.cami.recibo_counter, 1)
 
     def test_confirmar_falla_todo_o_nada_sin_huecos(self, m_up, m_log):
         self.activar()
@@ -158,11 +156,11 @@ class CuarentenaTests(TestCase):
         with patch("modules.documentos.cuarentena.render_documento_pdf", side_effect=[(b"%PDF", __import__("datetime").date.today(), self.cami), ValueError("boom")]):
             self.assertEqual(self.confirmar([a, b]).status_code, 400)
         self.cami.refresh_from_db()
-        self.assertEqual(self.cami.factura_counter, 0)
+        self.assertEqual(self.cami.recibo_counter, 0)
         self.assertEqual(Documento.objects.filter(estado="cuarentena").count(), 2)
         self.assertEqual(self.confirmar([a, b]).status_code, 200)
         self.assertEqual(
-            sorted(Documento.objects.values_list("num_doc", flat=True)), ["CC1-26", "CC2-26"]
+            sorted(Documento.objects.values_list("num_doc", flat=True)), ["RE1-26", "RE2-26"]
         )
 
     def recepcion(self):
@@ -179,7 +177,7 @@ class CuarentenaTests(TestCase):
         c = self.recepcion()
         r = c.post("/api/v1/documentos/confirmar/", {"ids": [a["id"]]}, format="json")
         self.assertEqual(r.status_code, 200, r.content)
-        self.assertEqual(r.json()[0]["num_doc"], "CC1-26")
+        self.assertEqual(r.json()[0]["num_doc"], "RE1-26")
         self.assertEqual(c.delete(f"/api/v1/documentos/{b['id']}/").status_code, 204)
 
     def test_recepcion_no_borra_ni_anula_un_documento_confirmado(self, m_up, m_log):
@@ -201,7 +199,7 @@ class CuarentenaTests(TestCase):
         self.assertEqual(Documento.objects.count(), 1)
         c = self.confirmar([r.json()["id"]])
         self.assertEqual(c.status_code, 200, c.content)
-        self.assertEqual(c.json()[0]["num_doc"], "CC1-26")
+        self.assertEqual(c.json()[0]["num_doc"], "RE1-26")
 
     def test_juntar_distinto_pagador_falla(self, m_up, m_log):
         self.activar()
