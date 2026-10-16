@@ -137,6 +137,10 @@ class PagoViewSet(ModelViewSet):
         if pagador: qs = qs.filter(pagador_id=pagador)
         if marca:   qs = qs.filter(marca=marca)
         if estado_carga: qs = qs.filter(estado_carga=estado_carga)
+        if self.action == "list" and self.request.query_params.get("borrados") != "1":
+            qs = qs.filter(borrado_at__isnull=True)
+        elif self.action == "list":
+            qs = qs.filter(borrado_at__isnull=False)
         return qs
 
     @action(detail=True, methods=["get"], url_path="preview-factura")
@@ -349,9 +353,25 @@ class PagoViewSet(ModelViewSet):
 
     def destroy(self, request, *args, **kwargs):
         pago = self.get_object()
+        validos = [
+            d for d in list(pago.documentos.all()) + list(pago.documentos_combinados.all())
+            if d.is_issued and d.estado != "anulada"
+        ]
+        if pago.estado == "anulado":
+            # Cobro anulado (p. ej. pago duplicado por error): se "borra" sin
+            # perder rastro — se oculta, y sus documentos anulados se conservan.
+            if validos:
+                return Response(
+                    {"error": "Este pago aún tiene documentos vigentes: anúlalos antes de borrarlo."},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            pago.borrado_at = timezone.now()
+            pago.borrado_por = request.user
+            pago.save(update_fields=["borrado_at", "borrado_por"])
+            return Response(status=status.HTTP_204_NO_CONTENT)
         if any(doc.is_issued for doc in pago.documentos.all()):
             return Response(
-                {"error": "Este pago tiene documentos emitidos: anúlalos en vez de eliminar el pago."},
+                {"error": "Este pago tiene documentos emitidos: anúlalo (indicando si se cobró) y luego podrás borrarlo."},
                 status=status.HTTP_409_CONFLICT,
             )
         # Unlike the primary side (Documento.pago, on_delete=PROTECT), a
@@ -377,10 +397,15 @@ class PagoViewSet(ModelViewSet):
         from modules.documentos.invoice_service import regenerate_anulada_pdf
         from modules.documentos.sheets_log import log_anulacion
 
+        from .cobro import PREGUNTA, anular_cobro, leer_bool
+
         pago = self.get_object()
         motivo = (request.data.get("motivo_anulacion") or "").strip()
         if not motivo:
             return Response({"error": "motivo_anulacion es obligatorio."}, status=status.HTTP_400_BAD_REQUEST)
+        quitar_cobro = leer_bool(request.data.get("anular_cobro"))
+        if quitar_cobro is None:
+            return Response({"error": PREGUNTA}, status=status.HTTP_400_BAD_REQUEST)
 
         docs = [d for d in pago.documentos.all() if d.is_issued and d.estado != "anulada"]
         if not docs:
@@ -402,11 +427,42 @@ class PagoViewSet(ModelViewSet):
             except Exception as e:
                 print(f"[anular] sheet log failed (non-critical): {e}")
 
+        if quitar_cobro:
+            afectados = {pago.id: pago}
+            for doc in docs:
+                for p in doc.todos_los_pagos():
+                    afectados.setdefault(p.id, p)
+            anular_cobro(list(afectados.values()), request.user, motivo)
+            pago.refresh_from_db()
+        return Response(PagoSerializer(pago).data)
+
+    @action(detail=True, methods=["post"], url_path="restaurar-cobro")
+    def restaurar_cobro(self, request, pk=None):
+        from .cobro import leer_bool
+
+        pago = self.get_object()
+        if pago.estado != "anulado":
+            return Response({"error": "Este cobro no está anulado."}, status=status.HTTP_400_BAD_REQUEST)
+        cobrado = leer_bool(request.data.get("cobrado"))
+        if cobrado is None:
+            return Response({"error": "Indica si se ha cobrado este dinero (cobrado: true o false)."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        pago.estado = "pagado" if cobrado else "pendiente"
+        pago.anulado_at = None
+        pago.motivo_anulacion = ""
+        pago.anulado_por = None
+        pago.borrado_at = None
+        pago.borrado_por = None
+        pago.save(update_fields=["estado", "anulado_at", "motivo_anulacion", "anulado_por",
+                                 "borrado_at", "borrado_por"])
         return Response(PagoSerializer(pago).data)
 
     @action(detail=True, methods=["post"], url_path="marcar-pagado")
     def marcar_pagado(self, request, pk=None):
         pago = self.get_object()
+        if pago.estado == "anulado":
+            return Response({"error": "Este cobro está anulado: restáuralo antes de marcarlo como pagado."},
+                            status=status.HTTP_409_CONFLICT)
         pago.estado = "pagado"
         pago.fecha  = timezone.now().date()
         pago.save(update_fields=["estado", "fecha"])

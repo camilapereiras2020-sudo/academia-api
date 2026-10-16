@@ -116,6 +116,7 @@ class PagadorCalculadoraView(APIView):
 
             pagos_periodo = list(
                 Pago.objects.filter(academia=tenant, alumno_id__in=[a.id for a in alumnos], periodo=periodo)
+                .exclude(estado="anulado")   # un cobro anulado no cuenta ni como pagado ni como pendiente
             )
             if not pagos_periodo:
                 estado_pago = "sin_generar"

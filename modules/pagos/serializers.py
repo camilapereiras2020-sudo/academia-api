@@ -42,12 +42,22 @@ class PagoSerializer(TenantScopedFKMixin, serializers.ModelSerializer):
             "num_doc", "serie_id", "iban", "stripe_payment_intent", "created_at",
             "estado_carga", "numero_factura_reservado", "concepto_original", "concepto_libre",
             "documento_anulado", "documento_en_cuarentena",
+            "anulado_at", "motivo_anulacion",
         ]
         read_only_fields = [
             "id", "created_at", "num_doc", "serie_id", "emisor", "emisor_nombre", "tarifa_nombre",
             "estado_carga", "numero_factura_reservado", "concepto_original", "documento_anulado",
-            "documento_en_cuarentena",
+            "documento_en_cuarentena", "anulado_at", "motivo_anulacion",
         ]
+
+    def validate_estado(self, value):
+        # El cobro se anula desde "Anular" (preguntando si se cobró) y se
+        # restaura con "restaurar-cobro": nunca editando el estado a mano.
+        if value == "anulado":
+            raise serializers.ValidationError("Para anular un cobro usa «Anular» en su documento.")
+        if self.instance is not None and self.instance.estado == "anulado":
+            raise serializers.ValidationError("Este cobro está anulado: restáuralo antes de cambiar su estado.")
+        return value
 
     def get_documento_en_cuarentena(self, obj):
         # Mismo criterio que documento_anulado: el documento propio o, si el

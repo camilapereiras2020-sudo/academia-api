@@ -4,7 +4,9 @@ from modules.tarifas.models import MARCA_CHOICES
 
 User = get_user_model()
 
-ESTADO_CHOICES = [("pagado", "Pagado"), ("pendiente", "Pendiente"), ("parcial", "Pago parcial")]
+# "anulado": el cobro se anuló (error o duplicado). No cuenta como ingreso en
+# ninguna parte; se decide de forma explícita al anular un documento.
+ESTADO_CHOICES = [("pagado", "Pagado"), ("pendiente", "Pendiente"), ("parcial", "Pago parcial"), ("anulado", "Anulado")]
 ESTADO_CARGA_CHOICES = [("completo", "Completo"), ("pendiente_completar", "Pendiente de completar")]
 
 class Pago(models.Model):
@@ -25,6 +27,14 @@ class Pago(models.Model):
     total = models.DecimalField(max_digits=8, decimal_places=2)
     metodo = models.CharField(max_length=20)
     estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default="pendiente")
+    # Rastro de un cobro anulado (quién, cuándo y por qué).
+    anulado_at       = models.DateTimeField(null=True, blank=True)
+    motivo_anulacion = models.TextField(blank=True)
+    anulado_por      = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
+    # "Borrado": solo un pago con el cobro anulado. Se oculta de las listas pero
+    # no se destruye, y sus documentos anulados se conservan (numeración fiscal).
+    borrado_at  = models.DateTimeField(null=True, blank=True)
+    borrado_por = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
     fecha = models.DateField(null=True, blank=True)
     horas_trabajadas = models.DecimalField(max_digits=5, decimal_places=1, default=0, help_text='Horas trabajadas este mes')
     notas = models.TextField(blank=True)
