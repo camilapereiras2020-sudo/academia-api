@@ -42,8 +42,15 @@ RANGERS = dict(
 )
 
 
+# Datos que se editan desde Configuración → Datos de facturación (ver
+# EmisorSerializer). Como este comando corre en CADA despliegue (Procfile), solo
+# los rellena cuando están vacíos: antes los sobrescribía siempre y un IBAN (o
+# una dirección) escrito en la app se perdía en el siguiente deploy.
+EDITABLES_EN_LA_APP = {"nombre", "autonoma", "nif", "direccion", "ciudad", "telefono", "email", "iban"}
+
+
 class Command(BaseCommand):
-    help = "Upsert Emisor records for Cami&Co and Rangers Academy"
+    help = "Upsert Emisor records for Cami&Co and Rangers Academy (no pisa lo escrito en la app)"
 
     def handle(self, *args, **options):
         user = User.objects.first()
@@ -59,11 +66,14 @@ class Command(BaseCommand):
             if created:
                 self.stdout.write(self.style.SUCCESS(f"Created {slug} emisor (id={emisor.id})"))
             else:
-                # Update everything EXCEPT drive_folder_id if it's already set to a real value
+                # Update the structural fields (prefixes, baselines, activo…) always;
+                # the editable ones only when empty; never an existing drive_folder_id.
                 changed = []
                 for field, val in data.items():
                     if field == "drive_folder_id" and emisor.drive_folder_id:
                         continue  # never overwrite a folder ID that's already set
+                    if field in EDITABLES_EN_LA_APP and getattr(emisor, field):
+                        continue  # lo escrito en la app manda
                     if getattr(emisor, field) != val:
                         setattr(emisor, field, val)
                         changed.append(field)
