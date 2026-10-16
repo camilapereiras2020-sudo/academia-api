@@ -472,6 +472,11 @@ class DocumentoViewSet(ModelViewSet):
         if not motivo:
             return Response({"error": "motivo_anulacion es obligatorio."}, status=status.HTTP_400_BAD_REQUEST)
 
+        from modules.pagos.cobro import PREGUNTA, anular_cobro, leer_bool
+        quitar_cobro = leer_bool(request.data.get("anular_cobro"))
+        if quitar_cobro is None:
+            return Response({"error": PREGUNTA}, status=status.HTTP_400_BAD_REQUEST)
+
         from .invoice_service import regenerate_anulada_pdf
         try:
             new_drive_id = regenerate_anulada_pdf(doc)
@@ -493,4 +498,7 @@ class DocumentoViewSet(ModelViewSet):
         except Exception as e:
             print(f"[anular] sheet log failed (non-critical): {e}")
 
-        return Response(DocumentoSerializer(doc).data)
+        cobros = anular_cobro(doc.todos_los_pagos(), request.user, motivo) if quitar_cobro else 0
+        data = dict(DocumentoSerializer(doc).data)
+        data["cobro_anulado"] = cobros
+        return Response(data)

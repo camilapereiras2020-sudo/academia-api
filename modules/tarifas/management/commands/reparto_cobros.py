@@ -124,7 +124,7 @@ def calcular_esperado(owner, periodo):
         .prefetch_related("inscripciones__grupo__profesor", "pagador__alumnos")
     )
     pagos = defaultdict(list)
-    for pg in Pago.objects.filter(academia=owner, periodo=periodo):
+    for pg in Pago.objects.filter(academia=owner, periodo=periodo).exclude(estado="anulado"):
         pagos[pg.alumno_id].append(pg.estado)
 
     por_pagador = defaultdict(list)
