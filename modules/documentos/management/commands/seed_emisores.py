@@ -14,8 +14,11 @@ CAMIANDCO = dict(
     iban             = "ES10 2080 5020 0530 4003 9725",
     factura_prefix   = "CC",
     recibo_prefix    = "RE",
-    factura_baseline = 236,
-    recibo_baseline  = 236,
+    # Cada enero el contador vuelve a su baseline: 0 = la numeración empieza de
+    # cero en enero (antes 236, que era el punto de partida de 2026). No afecta al
+    # año en curso: el contador de 2026 sigue donde está.
+    factura_baseline = 0,
+    recibo_baseline  = 0,
     recibo_efectivo_suffix   = "C",
     recibo_efectivo_baseline = 199,
     drive_folder_id  = "1W3Jt5XMelFeUa_W4Gr8r381R4Gaz1imn",

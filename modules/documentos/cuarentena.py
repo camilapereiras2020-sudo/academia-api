@@ -14,8 +14,6 @@ import threading
 from django.db import transaction
 from django.utils import timezone
 
-from modules.pagos.constants import tipo_doc_for_metodo
-
 from .invoice_service import (
     _next_invoice_number,
     render_documento_pdf,
@@ -39,9 +37,11 @@ def render_provisional_pdf(doc) -> bytes:
     return pdf_bytes
 
 
-def crear_documento_cuarentena(tenant, pagos, emisor_id=None):
+def crear_documento_cuarentena(tenant, pagos, emisor_id=None, tipo="recibo"):
     """Create one provisional Documento for `pagos` (one pago, or several of
-    the same pagador for a combined/family one). Idempotent per pago: if the
+    the same pagador for a combined/family one). Since the recibo→factura flow
+    every new document is a "recibo"; a factura is only made by hand from a
+    confirmed recibo (crear_factura_desde_recibo). Idempotent per pago: if the
     primary pago already has a quarantined document, return it. No número is
     allocated and no counter is touched. Returns (doc, created)."""
     primary = pagos[0]
@@ -67,7 +67,7 @@ def crear_documento_cuarentena(tenant, pagos, emisor_id=None):
         academia=tenant,
         pago=primary,
         emisor=emisor,
-        tipo=tipo_doc_for_metodo(primary.metodo),
+        tipo=tipo,
         nombre=f"provisional-{primary.id}.pdf",
         num_doc="",
         estado=ESTADO,
@@ -87,6 +87,8 @@ def juntar_documentos(docs, emisor_id=None):
         raise CuarentenaError("Selecciona al menos 2 documentos para juntar.")
     if any(d.estado != ESTADO for d in docs):
         raise CuarentenaError("Solo se pueden juntar documentos en cuarentena.")
+    if any(d.recibo_origen_id for d in docs) or len({d.tipo for d in docs}) != 1:
+        raise CuarentenaError("Solo se pueden juntar documentos del mismo tipo que no vengan de un recibo.")
 
     pagos = []
     for d in docs:
@@ -104,10 +106,9 @@ def juntar_documentos(docs, emisor_id=None):
     with transaction.atomic():
         keep, rest = docs[0], docs[1:]
         keep.emisor = emisor
-        keep.tipo = tipo_doc_for_metodo(pagos[0].metodo)
         keep.pago = pagos[0]
         keep.nombre = f"provisional-{pagos[0].id}.pdf"
-        keep.save(update_fields=["emisor", "tipo", "pago", "nombre"])
+        keep.save(update_fields=["emisor", "pago", "nombre"])
         for d in rest:
             d.pagos_adicionales.clear()
             d.delete()
@@ -191,12 +192,17 @@ def confirmar_documentos(tenant, doc_ids, scope_qs=None):
             if d.pago is None:
                 raise CuarentenaError(f"Documento {d.id} no tiene pago asociado.")
             emisor = locked[d.emisor_id or d.pago.emisor_id]
-            tipo = tipo_doc_for_metodo(d.pago.metodo)
+            tipo = d.tipo   # fijado al crearlo: recibo, o factura derivada de un recibo
             pagos = d.todos_los_pagos()
+            es_factura_de_recibo = d.recibo_origen_id is not None
 
             # A pre-assigned number (external reconciliation / bulk import) is
-            # honoured exactly as the immediate flow does.
-            num_doc = d.pago.numero_factura_reservado or _next_invoice_number(emisor, tipo)
+            # honoured exactly as the immediate flow does — pero nunca en una
+            # factura derivada: ese número ya lo usó su recibo.
+            num_doc = (
+                _next_invoice_number(emisor, tipo) if es_factura_de_recibo
+                else d.pago.numero_factura_reservado or _next_invoice_number(emisor, tipo)
+            )
 
             pdf_bytes, fecha, emisor_obj = render_documento_pdf(d, num_doc=num_doc, tipo=tipo)
 
@@ -208,10 +214,11 @@ def confirmar_documentos(tenant, doc_ids, scope_qs=None):
             d.emitida_at = now
             d.save(update_fields=["tipo", "num_doc", "nombre", "pdf_data", "estado", "emitida_at"])
 
-            for p in pagos:
-                p.num_doc = num_doc
-                p.numero_factura_reservado = num_doc
-            type(pagos[0]).objects.bulk_update(pagos, ["num_doc", "numero_factura_reservado"])
+            if not es_factura_de_recibo:   # el pago sigue mostrando el número de su recibo
+                for p in pagos:
+                    p.num_doc = num_doc
+                    p.numero_factura_reservado = num_doc
+                type(pagos[0]).objects.bulk_update(pagos, ["num_doc", "numero_factura_reservado"])
 
             finalizers.append(_make_finalizer(d.id, pdf_bytes, f"{num_doc}.pdf", fecha, emisor_obj))
     return docs, finalizers
@@ -238,3 +245,30 @@ def _make_finalizer(doc_id, pdf_bytes, filename, fecha, emisor):
             print(f"[cuarentena] sheet log failed (non-critical): {e}")
 
     return run
+
+
+def crear_factura_desde_recibo(recibo):
+    """Factura manual a partir de un recibo ya confirmado (emitida). Nace en
+    cuarentena, enlazada al recibo y con los mismos pagos. Idempotente: si ya
+    hay una factura vigente (o provisional) de ese recibo, la devuelve.
+    Returns (factura, created)."""
+    if recibo.tipo == "factura" or recibo.recibo_origen_id:
+        raise CuarentenaError("Solo se puede generar una factura a partir de un recibo.")
+    if recibo.estado != "emitida":
+        raise CuarentenaError("El recibo debe estar confirmado (con número) antes de generar su factura.")
+    existing = recibo.facturas.exclude(estado__in=["anulada", "borrador"]).order_by("-created_at").first()
+    if existing:
+        return existing, False
+
+    factura = Documento.objects.create(
+        academia=recibo.academia,
+        pago=recibo.pago,
+        emisor=recibo.emisor,
+        tipo="factura",
+        nombre=f"provisional-{recibo.pago_id}.pdf",
+        num_doc="",
+        estado=ESTADO,
+        recibo_origen=recibo,
+    )
+    factura.pagos_adicionales.set(recibo.pagos_adicionales.all())
+    return factura, True

@@ -25,6 +25,8 @@ class DocumentoSerializer(serializers.ModelSerializer):
     pago_info = serializers.SerializerMethodField()
     pagos_adicionales = serializers.PrimaryKeyRelatedField(many=True, read_only=True)
     provisional = serializers.SerializerMethodField()
+    recibo_origen_num_doc = serializers.SerializerMethodField()
+    factura_vigente_num_doc = serializers.SerializerMethodField()
 
     class Meta:
         model = Documento
@@ -32,11 +34,21 @@ class DocumentoSerializer(serializers.ModelSerializer):
             "id", "pago", "pagos_adicionales", "tipo", "nombre", "num_doc",
             "mime_type", "download_url", "drive_url", "pago_info", "created_at",
             "estado", "emitida_at", "anulada_at", "motivo_anulacion", "emisor", "provisional",
+            "recibo_origen", "recibo_origen_num_doc", "factura_vigente_num_doc",
         ]
         read_only_fields = [
             "id", "created_at", "download_url", "drive_url", "pago_info",
             "estado", "emitida_at", "anulada_at", "motivo_anulacion", "pagos_adicionales", "emisor", "provisional",
+            "recibo_origen", "recibo_origen_num_doc", "factura_vigente_num_doc",
         ]
+
+    def get_recibo_origen_num_doc(self, obj):
+        return obj.recibo_origen.num_doc if obj.recibo_origen_id else None
+
+    def get_factura_vigente_num_doc(self, obj):
+        """Número de la factura vigente de este recibo (o "Provisional"); None si no tiene."""
+        f = obj.facturas.exclude(estado__in=["anulada", "borrador"]).order_by("-created_at").first()
+        return (f.num_doc or "Provisional") if f else None
 
     def get_provisional(self, obj):
         return obj.estado == "cuarentena"

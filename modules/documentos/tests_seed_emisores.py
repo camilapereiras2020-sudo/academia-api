@@ -54,3 +54,16 @@ class SeedEmisoresTests(TestCase):
         self.seed()
         e = Emisor.objects.get(slug="camiandco")
         self.assertEqual((e.factura_counter, e.factura_counter_year, e.drive_folder_id), (57, 2026, "MI_CARPETA"))
+
+
+    def test_la_numeracion_de_enero_empieza_de_cero_sin_tocar_el_ano_en_curso(self):
+        self.seed()
+        Emisor.objects.filter(slug="camiandco").update(
+            factura_baseline=236, recibo_baseline=236, factura_counter=250, factura_counter_year=2026,
+            recibo_counter=240, recibo_counter_year=2026,
+        )
+        self.seed()
+        e = Emisor.objects.get(slug="camiandco")
+        self.assertEqual((e.factura_baseline, e.recibo_baseline), (0, 0))
+        self.assertEqual((e.factura_counter, e.recibo_counter), (250, 240))   # 2026 sigue donde estaba
+        self.assertEqual((e.recibo_prefix, Emisor.objects.get(slug="rangers").recibo_prefix), ("RE", "RR"))

@@ -79,14 +79,18 @@ class CombinedInvoiceTests(TestCase):
         data = resp.json()
         self.assertEqual(data["pago"], self.pago1.id)
         self.assertEqual(set(data["pagos_adicionales"]), {self.pago3.id})
-        self.assertTrue(data["num_doc"].startswith("RA"))
+        self.assertEqual((data["estado"], data["tipo"], data["num_doc"]), ("cuarentena", "recibo", ""))
         self.assertEqual(data["pago_info"]["total"], "160.00")
         self.assertEqual(set(data["pago_info"]["alumnos"]), {"Hijo Uno", "Hijo Tres"})
 
+        conf = self.client.post("/api/v1/documentos/confirmar/", {"ids": [data["id"]]}, format="json")
+        self.assertEqual(conf.status_code, 200, conf.content)
+        num = conf.json()[0]["num_doc"]
+        self.assertTrue(num.startswith("RR"), num)   # recibo de Rangers
         self.pago1.refresh_from_db()
         self.pago3.refresh_from_db()
-        self.assertEqual(self.pago1.num_doc, data["num_doc"])
-        self.assertEqual(self.pago3.num_doc, data["num_doc"])
+        self.assertEqual(self.pago1.num_doc, num)
+        self.assertEqual(self.pago3.num_doc, num)
 
     @patch("modules.documentos.sheets_log.log_emision")
     @patch("modules.documentos.invoice_service.upload_to_drive")
@@ -114,7 +118,9 @@ class CombinedInvoiceTests(TestCase):
         )
         self.assertEqual(resp.status_code, 201, resp.content)
         data = resp.json()
-        self.assertTrue(data["num_doc"].startswith("CC"))
+        self.assertEqual((data["estado"], data["tipo"]), ("cuarentena", "recibo"))
+        conf = self.client.post("/api/v1/documentos/confirmar/", {"ids": [data["id"]]}, format="json")
+        self.assertTrue(conf.json()[0]["num_doc"].startswith("RE"))   # recibo de Cami&Co
         self.assertEqual(set(data["pago_info"]["alumnos"]), {"Hijo Uno", "Hijo Dos"})
 
     def test_combine_different_pagador_rejected(self):

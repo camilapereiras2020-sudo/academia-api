@@ -155,7 +155,6 @@ class DocumentoViewSet(ModelViewSet):
     def generar(self, request):
         from django.db import transaction
         from modules.pagos.models import Pago
-        from .invoice_service import generate_invoice_pdf_async
         from . import cuarentena
 
         pago_id = request.data.get("pago_id")
@@ -195,52 +194,18 @@ class DocumentoViewSet(ModelViewSet):
             if in_q:
                 return Response(DocumentoSerializer(in_q).data, status=status.HTTP_200_OK)
 
-            if request.user.tenant.modo_cuarentena:
-                try:
-                    doc, created = cuarentena.crear_documento_cuarentena(request.user.tenant, [pago])
-                except cuarentena.CuarentenaError as e:
-                    return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-                return Response(DocumentoSerializer(doc).data, status=status.HTTP_201_CREATED)
-
-            try:
-                num_doc, tipo, pdf_bytes, schedule_drive_upload = generate_invoice_pdf_async(pago)
-            except ValueError as e:
-                # incomplete/misconfigured pago — a predictable client error, not a server fault
-                return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-            except Exception as e:
+            if pago.estado != "pagado":
                 return Response(
-                    {"error": f"Error generando documento: {str(e)}"},
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    {"error": "Marca el pago como cobrado antes de generar su recibo."},
+                    status=status.HTTP_400_BAD_REQUEST,
                 )
-
-            doc = Documento.objects.create(
-                academia   = request.user.tenant,
-                pago       = pago,
-                tipo       = tipo,
-                nombre     = f"{num_doc}.pdf",
-                num_doc    = num_doc,
-                s3_key     = "",              # filled in by the background Drive upload below
-                local_path = "",
-                pdf_data   = pdf_bytes,        # authoritative copy — independent of Drive
-                mime_type  = "application/pdf",
-                estado     = "emitida",
-                emitida_at = timezone.now(),
-            )
-
-            pago.num_doc = num_doc
-            pago.save(update_fields=["num_doc"])
-
-        # Outside the transaction (row is now committed) — Drive upload runs
-        # silently in the background and never blocks or fails this request.
-        schedule_drive_upload(doc.id)
-
-        try:
-            from .sheets_log import log_emision
-            log_emision(doc)
-        except Exception as e:
-            print(f"[generar] sheet log failed (non-critical): {e}")
-
-        return Response(DocumentoSerializer(doc).data, status=status.HTTP_201_CREATED)
+            # Todo documento nace provisional (cuarentena) y es un recibo; la
+            # factura se genera a mano desde un recibo confirmado.
+            try:
+                doc, created = cuarentena.crear_documento_cuarentena(request.user.tenant, [pago])
+            except ValueError as e:   # CuarentenaError y validaciones de combinados
+                return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(DocumentoSerializer(doc).data, status=status.HTTP_201_CREATED)
 
     @action(detail=False, methods=["post"], url_path="generar-combinado")
     def generar_combinado(self, request):
@@ -252,7 +217,6 @@ class DocumentoViewSet(ModelViewSet):
         family split across both marcas)."""
         from django.db import transaction
         from modules.pagos.models import Pago
-        from .invoice_service import generate_combined_invoice_pdf_async
         from . import cuarentena
 
         pago_ids = request.data.get("pago_ids") or []
@@ -277,55 +241,31 @@ class DocumentoViewSet(ModelViewSet):
             # list() forces the query: a bare lazy queryset never takes the lock.
             list(Pago.objects.select_for_update().filter(id__in=[p.id for p in pagos]))
 
-            if request.user.tenant.modo_cuarentena:
-                try:
-                    doc, _ = cuarentena.crear_documento_cuarentena(
-                        request.user.tenant, pagos, emisor_id=emisor_id
-                    )
-                except cuarentena.CuarentenaError as e:
-                    return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-                return Response(DocumentoSerializer(doc).data, status=status.HTTP_201_CREATED)
-
-            try:
-                num_doc, tipo, pdf_bytes, schedule_drive_upload = generate_combined_invoice_pdf_async(
-                    pagos, emisor_id=emisor_id
-                )
-            except ValueError as e:
-                return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-            except Exception as e:
+            if any(p.estado != "pagado" for p in pagos):
                 return Response(
-                    {"error": f"Error generando documento combinado: {str(e)}"},
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    {"error": "Todos los pagos deben estar cobrados para generar su recibo combinado."},
+                    status=status.HTTP_400_BAD_REQUEST,
                 )
+            try:
+                doc, _ = cuarentena.crear_documento_cuarentena(
+                    request.user.tenant, pagos, emisor_id=emisor_id
+                )
+            except ValueError as e:   # CuarentenaError y validaciones de combinados
+                return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(DocumentoSerializer(doc).data, status=status.HTTP_201_CREATED)
 
-            doc = Documento.objects.create(
-                academia   = request.user.tenant,
-                pago       = pagos[0],
-                tipo       = tipo,
-                nombre     = f"{num_doc}.pdf",
-                num_doc    = num_doc,
-                s3_key     = "",
-                local_path = "",
-                pdf_data   = pdf_bytes,
-                mime_type  = "application/pdf",
-                estado     = "emitida",
-                emitida_at = timezone.now(),
-            )
-            doc.pagos_adicionales.set(pagos[1:])
+    @action(detail=True, methods=["post"], url_path="generar-factura")
+    def generar_factura(self, request, pk=None):
+        """Factura manual a partir de un recibo ya confirmado. Nace provisional
+        (cuarentena) y recibe su número CC/RA al confirmarla."""
+        from . import cuarentena
 
-            for p in pagos:
-                p.num_doc = num_doc
-            Pago.objects.bulk_update(pagos, ["num_doc"])
-
-        schedule_drive_upload(doc.id)
-
+        recibo = self.get_object()
         try:
-            from .sheets_log import log_emision
-            log_emision(doc)
-        except Exception as e:
-            print(f"[generar-combinado] sheet log failed (non-critical): {e}")
-
-        return Response(DocumentoSerializer(doc).data, status=status.HTTP_201_CREATED)
+            factura, created = cuarentena.crear_factura_desde_recibo(recibo)
+        except cuarentena.CuarentenaError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(DocumentoSerializer(factura).data, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
 
     @action(detail=False, methods=["post"], url_path="confirmar")
     def confirmar(self, request):
@@ -476,6 +416,20 @@ class DocumentoViewSet(ModelViewSet):
         quitar_cobro = leer_bool(request.data.get("anular_cobro"))
         if quitar_cobro is None:
             return Response({"error": PREGUNTA}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Recibo con factura vigente: primero la factura (el recibo es su origen).
+        if doc.facturas.exclude(estado__in=["anulada", "borrador"]).exists():
+            return Response(
+                {"error": "Este recibo tiene una factura vigente: anula primero la factura."},
+                status=status.HTTP_409_CONFLICT,
+            )
+        # Factura cuyo recibo sigue vigente: el cobro lo sostiene el recibo, así
+        # que anular la factura nunca anula el cobro (eso se hace anulando el recibo).
+        if quitar_cobro and doc.recibo_origen_id and doc.recibo_origen.estado in ("emitida", "cuarentena"):
+            return Response(
+                {"error": "El cobro sigue amparado por su recibo: para anularlo, anula el recibo."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         from .invoice_service import regenerate_anulada_pdf
         try:

@@ -108,6 +108,12 @@ class Documento(models.Model):
     mime_type  = models.CharField(max_length=100, default="application/pdf")
     created_at = models.DateTimeField(auto_now_add=True)
 
+    # Una factura se genera a mano a partir de un recibo ya confirmado: este es
+    # ese recibo. Null en recibos y en todo documento anterior al flujo recibo→factura.
+    recibo_origen = models.ForeignKey(
+        "self", null=True, blank=True, on_delete=models.PROTECT, related_name="facturas"
+    )
+
     estado           = models.CharField(max_length=20, choices=ESTADO_CHOICES, default="borrador")
     emitida_at       = models.DateTimeField(null=True, blank=True)
     anulada_at       = models.DateTimeField(null=True, blank=True)
