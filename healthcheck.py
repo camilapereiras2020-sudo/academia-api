@@ -9,8 +9,14 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import django
 django.setup()
 
+from django.contrib.auth import get_user_model
 from modules.documentos.models import Documento, Emisor
 from modules.pagos.models import Pago
+
+# Modo cuarentena activo en alguna academia: este script NO debe emitir
+# documentos nuevos (consumirían números de la secuencia saltándose la
+# confirmación). Ver secciones 7 y 8.
+CUARENTENA = get_user_model().objects.filter(modo_cuarentena=True).exists()
 from modules.documentos.invoice_service import (
     _drive, generate_invoice_for_pago, upload_to_drive, generate_pdf_bytes
 )
@@ -156,6 +162,13 @@ for d in docs:
 
 
 # ── 7. FIX BROKEN DOCUMENTS ──────────────────────────────────────────────────
+if CUARENTENA and orphan_pagos:
+    log(WARN, "Fix", (
+        f"Modo cuarentena activo: no se generan documentos para {len(orphan_pagos)} pago(s) sin "
+        "documento. Se crean desde la app (pasan por cuarentena) y se confirman en Documentos."
+    ))
+    orphan_pagos = []
+
 if broken_docs or orphan_pagos:
     print("\n=== 7. FIXING BROKEN DOCUMENTS ===")
 
@@ -333,7 +346,9 @@ def run_e2e_test(emisor_slug, label):
         pass
     log(PASS, f"E2E:{label}", "Test records cleaned up")
 
-if service:
+if CUARENTENA:
+    log(WARN, "E2E", "Omitida: con el modo cuarentena activo esta prueba emitiría facturas reales con número y luego borraría el documento, dejando un hueco en la secuencia")
+elif service:
     run_e2e_test("camiandco", "Cami&Co")
     run_e2e_test("rangers",   "Rangers")
 else:

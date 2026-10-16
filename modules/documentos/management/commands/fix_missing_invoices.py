@@ -1,6 +1,12 @@
 """
 Generate invoices for Pago records that have no linked Documento.
 
+Respects the "Modo cuarentena": for an academia with User.modo_cuarentena on,
+a pago without documento gets a *provisional* documento in cuarentena (no
+número, no Drive) instead of an issued one — it's confirmed later from
+Documentos. Pagos already covered by a combined (family) documento are never
+touched.
+
 Manual-only — deliberately NOT wired into the Procfile's deploy chain. It
 doesn't check estado_carga, so a mid-completion or otherwise-not-ready Pago
 that already has emisor+alumno+pagador set would get silently, permanently
@@ -16,6 +22,7 @@ from django.core.management.base import BaseCommand
 from django.utils import timezone
 
 from modules.documentos.models import Documento, Emisor
+from modules.documentos import cuarentena
 from modules.documentos.invoice_service import generate_invoice_for_pago
 from modules.pagos.models import Pago
 from modules.pagos.constants import tipo_doc_for_metodo
@@ -36,6 +43,12 @@ class Command(BaseCommand):
 
         pago_ids_with_doc = set(
             Documento.objects.exclude(pago=None).values_list("pago_id", flat=True)
+        )
+        # Los pagos que van dentro de una factura combinada (pagos_adicionales)
+        # ya tienen documento: sin esto saldrían como "sin documento" y se les
+        # crearía uno propio, duplicando la factura de la familia.
+        pago_ids_with_doc |= set(
+            Documento.pagos_adicionales.through.objects.values_list("pago_id", flat=True)
         )
         missing = (
             Pago.objects.exclude(id__in=pago_ids_with_doc)
@@ -65,12 +78,33 @@ class Command(BaseCommand):
                 skipped += 1
                 continue
 
-            if not emisor.drive_folder_id:
+            en_cuarentena = pago.academia.modo_cuarentena
+
+            # La cuarentena no sube nada a Drive, así que no necesita carpeta.
+            if not en_cuarentena and not emisor.drive_folder_id:
                 self.stdout.write(f"  SKIP pago {pago.id}: emisor has no drive_folder_id")
                 skipped += 1
                 continue
 
             tipo = tipo_doc_for_metodo(pago.metodo)
+
+            if en_cuarentena:
+                if dry:
+                    self.stdout.write(
+                        f"  would send to cuarentena (no número) for pago {pago.id} "
+                        f"({pago.alumno.nombre if pago.alumno else '?'}, {pago.periodo})"
+                    )
+                    ok += 1
+                    continue
+                try:
+                    doc, created = cuarentena.crear_documento_cuarentena(pago.academia, [pago])
+                except cuarentena.CuarentenaError as exc:
+                    self.stdout.write(f"  SKIP pago {pago.id}: {exc}")
+                    skipped += 1
+                    continue
+                self.stdout.write(self.style.SUCCESS(f"  OK pago {pago.id}: en cuarentena (documento {doc.id}, sin número)"))
+                ok += 1
+                continue
 
             try:
                 if dry:
